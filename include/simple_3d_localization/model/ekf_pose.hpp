@@ -24,7 +24,7 @@ namespace s3l::model {
  *          gravity_x, gravity_y, gravity_z] (19)
  * @note measurement = [x, y, z, qw, qx, qy, qz]
  */
-class EKFPoseSystemModel : public ekf::EKFSystemModel {
+class EKFPoseSystemModel : public EKFSystemModel {
 
 public:
     explicit EKFPoseSystemModel() {}
@@ -42,17 +42,13 @@ public:
         Vector3t vt = state.middleRows(3, 3);
         Quaterniont qt(state(6), state(7), state(8), state(9));
         qt.normalize(); // Ensure quaternion is normalized
-        Vector3t bias_acc = state.middleRows(10, 3);
-        Vector3t bias_gyro = state.middleRows(13, 3);
-        Vector3t gravity = state.middleRows(16, 3);
 
         next_state.head(3) = pt + vt * dt_;
-        next_state.segment(3, 3) = vt + gravity * dt_;
-        next_state.segment(6, 4) = qt.coeffs();
-        next_state.segment(6, 4).normalize(); // Ensure quaternion is normalized
-        next_state.segment(10, 3) = bias_acc;
-        next_state.segment(13, 3) = bias_gyro;
-        next_state.segment(16, 3) = gravity;
+        next_state.segment(3, 3) = vt;
+        next_state(6) = qt.w(); next_state(7) = qt.x(); next_state(8) = qt.y(); next_state(9) = qt.z();
+        next_state.segment(10, 3) = state.segment(10, 3);
+        next_state.segment(13, 3) = state.segment(13, 3);
+        next_state.segment(16, 3) = state.segment(16, 3);
 
         return next_state;
     }
@@ -74,7 +70,7 @@ public:
         const Vector3t bias_acc = state.middleRows(10, 3);
         const Vector3t bias_gyro = state.middleRows(13, 3);
         const Vector3t gravity = state.middleRows(16, 3);
-
+        
         // Control input is assumed to be [ax, ay, az, wx, wy, wz]
         Vector3t raw_acc(control.head(3));
         Vector3t raw_gyro(control.tail(3));

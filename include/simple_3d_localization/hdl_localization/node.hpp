@@ -64,6 +64,9 @@ public:
         cool_time_duration_ = this->declare_parameter<double>("cool_time_duration", 0.5);
         use_mahalanobis_gating_ = this->declare_parameter<bool>("use_mahalanobis_gating", false);
         mahalanobis_threshold_ = this->declare_parameter<double>("mahalanobis_threshold", 33.11);
+        use_imu_ = this->declare_parameter<bool>("use_imu", true);
+        use_odom_ = this->declare_parameter<bool>("use_odom", false);
+        imu_initialized_ = use_odom_ ? true : imu_initialized_;
 
         ndt_neighbor_search_radius_ = this->declare_parameter<double>("ndt_neighbor_search_radius", 2.0);
         ndt_resolution_ = this->declare_parameter<double>("ndt_resolution", 1.0);
@@ -83,12 +86,12 @@ public:
             initial_ba_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
                 "imu_init/accel_bias", rclcpp::QoS(1).transient_local(),
                 std::bind(&LocalizationNode::initialAccelBiasCallback, this, std::placeholders::_1));
-            initial_bg_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
-                "imu_init/gyro_bias", rclcpp::QoS(1).transient_local(),
-                std::bind(&LocalizationNode::initialGyroBiasCallback, this, std::placeholders::_1));
+            // initial_bg_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
+            //     "imu_init/gyro_bias", rclcpp::QoS(1).transient_local(),
+            //     std::bind(&LocalizationNode::initialGyroBiasCallback, this, std::placeholders::_1));
         } else if (imu_initialized_) {
             RCLCPP_INFO(this->get_logger(), "IMU initialization is skipped. Using provided parameters.");
-        } else {
+        } else if (!use_imu_) {
             RCLCPP_WARN(this->get_logger(), "IMU is not used.");
         }
 
@@ -160,7 +163,7 @@ public:
             Eigen::Vector3f pos(init_pose[0], init_pose[1], init_pose[2]);
             Eigen::Quaternionf quat(init_quat[3], init_quat[0], init_quat[1], init_quat[2]);
             pose_estimator_ = std::make_unique<PoseEstimator>(
-                registration_, pos, quat, filter_type_, cool_time_duration_
+                registration_, pos, quat, use_odom_, filter_type_, cool_time_duration_
             );
             pose_estimator_->useMahalanobisGating(use_mahalanobis_gating_);
             pose_estimator_->setMahalanobisThreshold(mahalanobis_threshold_);
@@ -492,7 +495,8 @@ private:
         pose_estimator_.reset(new PoseEstimator(
             registration_,
             Eigen::Vector3f(p.x, p.y, p.z),
-            Eigen::Quaternionf(q.w, q.x, q.y, q.z),
+            Eigen::Quaternionf(q.w, q.x, q.y, q.z).normalized(),
+            use_odom_,
             filter_type_,
             cool_time_duration_
         ));
@@ -558,13 +562,13 @@ private:
         has_init_ba = true;
         checkImuInitRead();
     }
-    void initialGyroBiasCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr& msg) {
-        imu_gyro_bias_ = Eigen::Vector3f(msg->x, msg->y, msg->z);
-        has_init_bg = true;
-        checkImuInitRead();
-    }
+    // void initialGyroBiasCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr& msg) {
+    //     imu_gyro_bias_ = Eigen::Vector3f(msg->x, msg->y, msg->z);
+    //     has_init_bg = true;
+    //     checkImuInitRead();
+    // }
     void checkImuInitRead() {
-        if (!imu_initialized_ && has_init_ba && has_init_bg && has_init_g) {
+        if (!imu_initialized_ && has_init_ba && has_init_g) {
             imu_initialized_ = true;
             RCLCPP_INFO(this->get_logger(), "IMU initialized with provided parameters.");
             RCLCPP_INFO(this->get_logger(), "  Gravity: [%f, %f, %f]", imu_gravity_.x(), imu_gravity_.y(), imu_gravity_.z());
@@ -574,7 +578,6 @@ private:
             // shutdown subscribers
             initial_g_sub_.reset();
             initial_ba_sub_.reset();
-            initial_bg_sub_.reset();
 
             if (est_initialized_) {
                 RCLCPP_INFO(this->get_logger(), "Updating pose estimator with IMU parameters.");
@@ -592,6 +595,8 @@ private:
     double gicp_max_correspondence_distance_;
     double gicp_voxel_resolution_;
     int num_threads_;
+
+    bool use_imu_, use_odom_;
 
     bool use_imu_initializer_, imu_initialized_;
     bool invert_acc_, invert_gyro_;
@@ -613,8 +618,7 @@ private:
 
     rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr initial_g_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr initial_ba_sub_;
-    rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr initial_bg_sub_;
-    Eigen::Vector3f imu_gravity_, imu_accel_bias_, imu_gyro_bias_;
+    Eigen::Vector3f imu_gravity_{0, 0, -9.80665}, imu_accel_bias_{0, 0, 0}, imu_gyro_bias_{0, 0, 0};
     bool has_init_g{false}, has_init_ba{false}, has_init_bg{false};
 
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pose_pub_;

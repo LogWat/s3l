@@ -12,6 +12,7 @@
 #include <simple_3d_localization/filter/ukf.hpp>
 #include <simple_3d_localization/filter/ekf.hpp>
 #include <simple_3d_localization/model/ukf_pose.hpp>
+#include <simple_3d_localization/model/ekf_odom_pose.hpp>
 #include <simple_3d_localization/model/ekf_pose.hpp>
 #include <simple_3d_localization/mahalanobis.hpp>
 
@@ -33,48 +34,76 @@ public:
      * @param registration          registration method
      * @param pos                   initial pose
      * @param quat                  initial quaternion
+     * @param use_odom              use odometry or not
+     * @param filter_type           filter type (UKF or EKF)
      * @param cool_time_duration    during "cool time", prediction is not performed
      */
     explicit PoseEstimator(
         std::shared_ptr<pcl::Registration<PointT, PointT>>& registration,
         const Vector3t& pos,
         const Quaterniont& quat,
+        bool use_odom,
         FilterType filter_type,
         double cool_time_duration = 1.0
     ): 
         cool_time_duration_(cool_time_duration),
         registration_(registration),
-        filter_type_(filter_type)
+        filter_type_(filter_type),
+        use_odom_(use_odom)
     {
         last_observation_ = Matrix4t::Identity();
         last_observation_.block<3, 3>(0, 0) = quat.toRotationMatrix();
         last_observation_.block<3, 1>(0, 3) = pos;
 
-        // pose_system の stateベクトルの次元
-        // 位置(3) + 速度(3) + 姿勢(4) + bias(3) + bias_gyro(3) + gravity(3) = 19
-        process_noise_ = MatrixXt::Identity(19, 19);
-        process_noise_.middleRows(0, 3) *= 1.0;
-        process_noise_.middleRows(3, 3) *= 1.0;
-        process_noise_.middleRows(6, 4) *= 0.5;
-        process_noise_.middleRows(10, 3) *= 1e-6;
-        process_noise_.middleRows(13, 3) *= 1e-6;
-        process_noise_.middleRows(16, 3) *= 1e-6;
+        VectorXt mean;
+        MatrixXt cov;
+        int state_dim = use_odom_ ? 10 : 19;
+        int input_dim = 6;
+        int measurement_dim = 7;
+
+        if (!use_odom_) {
+            // pose_system の stateベクトルの次元
+            // 位置(3) + 速度(3) + 姿勢(4) + bias(3) + bias_gyro(3) + gravity(3) = 19
+            process_noise_ = MatrixXt::Identity(19, 19);
+            process_noise_.middleRows(0, 3) *= 1.0;
+            process_noise_.middleRows(3, 3) *= 1.0;
+            process_noise_.middleRows(6, 4) *= 0.5;
+            process_noise_.middleRows(10, 3) *= 1e-3;
+            process_noise_.middleRows(13, 3) *= 1e-3;
+            process_noise_.middleRows(16, 3) *= 1e-9;
+
+            // 初期状態
+            mean = VectorXt::Zero(19);
+            mean.middleRows(0, 3) = pos;
+            mean.middleRows(3, 3).setZero();
+            mean.middleRows(6, 4) = Vector4t(quat.w(), quat.x(), quat.y(), quat.z()).normalized();
+            mean.middleRows(10, 3).setZero();
+            mean.middleRows(13, 3).setZero();
+            mean.middleRows(16, 3) = Vector3t(0, 0, -9.80665f);
+
+            cov = MatrixXt::Identity(19, 19) * 0.01;
+        } else {
+            // odom_system の stateベクトルの次元
+            // 位置(3) + 速度(3) + 姿勢(4) = 10
+            process_noise_ = MatrixXt::Identity(10, 10);
+            process_noise_.middleRows(0, 3) *= 1.0;
+            process_noise_.middleRows(3, 3) *= 1.0;
+            process_noise_.middleRows(6, 4) *= 0.5;
+
+            // 初期状態
+            mean = VectorXt::Zero(10);
+            mean.middleRows(0, 3) = pos;
+            mean.middleRows(3, 3).setZero();
+            mean.middleRows(6, 4) = Vector4t(quat.w(), quat.x(), quat.y(), quat.z()).normalized();
+
+            cov = MatrixXt::Identity(10, 10) * 0.01;
+        }
 
         // 位置(3) + 姿勢(4) = 7
         measurement_noise_ = MatrixXt::Identity(7, 7);
-        measurement_noise_.middleRows(0, 3) *= 0.01;
-        measurement_noise_.middleRows(3, 4) *= 0.01;
+        measurement_noise_.middleRows(0, 3) *= 0.1;
+        measurement_noise_.middleRows(3, 4) *= 0.05;
 
-        // 初期状態
-        VectorXt mean(19);
-        mean.middleRows(0, 3) = pos;
-        mean.middleRows(3, 3).setZero();
-        mean.middleRows(6, 4) = Vector4t(quat.w(), quat.x(), quat.y(), quat.z()).normalized();
-        mean.middleRows(10, 3).setZero();
-        mean.middleRows(13, 3).setZero();
-        mean.middleRows(16, 3) = Vector3t(0.0f, 0.0f, -9.81f); // 重力ベクトル
-
-        MatrixXt cov = MatrixXt::Identity(19, 19) * 0.01;
 
         if (filter_type_ == FilterType::UKF) {
             ukf_system_model_ = std::make_unique<model::UKFPoseSystemModel>();
@@ -82,10 +111,17 @@ public:
                 *ukf_system_model_, 19, 6, 7, process_noise_, measurement_noise_, mean, cov
             );
         } else if (filter_type_ == FilterType::EKF) {
-            ekf_system_model_ = std::make_unique<model::EKFPoseSystemModel>();
-            filter_ = std::make_unique<filter::ExtendedKalmanFilterX>(
-                *ekf_system_model_, 19, mean, cov, process_noise_
-            );
+            if (use_odom_) {
+                odom_system_model_ = std::make_unique<model::EKFOdomPoseSystemModel>();
+                filter_ = std::make_unique<filter::ExtendedKalmanFilterX>(
+                    *odom_system_model_, state_dim, mean, cov, process_noise_
+                );
+            } else {
+                ekf_system_model_ = std::make_unique<model::EKFPoseSystemModel>();
+                filter_ = std::make_unique<filter::ExtendedKalmanFilterX>(
+                    *ekf_system_model_, state_dim, mean, cov, process_noise_
+                );
+            }
             filter_->setMeasurementNoise(measurement_noise_);
         }
         filter_->setMean(mean);
@@ -233,6 +269,19 @@ public:
         if (std::isfinite(q_corr.w()) && q_corr.norm() > 1e-8f) q_corr.normalize();
         else q_corr = Quaterniont::Identity();
 
+        // DEBUG LOG
+        if (!use_odom_) {
+            RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
+                        "Corrected: pos=(%.3f, %.3f, %.3f), quat=(%.3f, %.3f, %.3f, %.3f), vel=(%.3f, %.3f, %.3f), bias_acc=(%.6f, %.6f, %.6f), bias_gyro=(%.6f, %.6f, %.6f), gravity=(%.3f, %.3f, %.3f)",
+                        state_after[0], state_after[1], state_after[2],
+                        state_after[6], state_after[7], state_after[8], state_after[9],
+                        state_after[3], state_after[4], state_after[5],
+                        state_after[10], state_after[11], state_after[12],
+                        state_after[13], state_after[14], state_after[15],
+                        state_after[16], state_after[17], state_after[18]
+            );
+        }
+
         imu_pred_error_ = imu_guess.inverse() * registration_->getFinalTransformation();
         last_correct_stamp_ = stamp;
         return aligned;
@@ -292,7 +341,7 @@ private:
 
     std::shared_ptr<pcl::Registration<PointT, PointT>> registration_;
 
-    MatrixXt process_noise_;
+    MatrixXt process_noise_{MatrixXt::Identity(19, 19)};
     MatrixXt measurement_noise_;
 
     Matrix4t last_observation_;
@@ -302,6 +351,7 @@ private:
     FilterType filter_type_;
     std::unique_ptr<model::UKFPoseSystemModel> ukf_system_model_;
     std::unique_ptr<model::EKFPoseSystemModel> ekf_system_model_;
+    std::unique_ptr<model::EKFOdomPoseSystemModel> odom_system_model_;
     std::unique_ptr<filter::KalmanFilterX> filter_;
 
     bool use_mahalanobis_{false};
@@ -311,6 +361,8 @@ private:
 
     int consecutive_reject_count_{0};
     const int init_consecutive_reject_{5};
+
+    bool use_odom_{false}; // odomを使う場合は別モデル
 };
 
 } // namespace hdl_localization

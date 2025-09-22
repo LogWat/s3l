@@ -88,7 +88,7 @@ public:
         return observation;
     }
 
-    double dt_; // time step
+    // double dt_; // time step
 };
 
 } // namespace s3l::model

@@ -7,15 +7,11 @@
 namespace s3l::model
 {
 
-namespace ekf {
-
 class EKFSystemModel: public SystemModel {
 public:
     virtual MatrixXt measurementJacobian(const VectorXt& state) const = 0;
     virtual MatrixXt stateTransitionJacobian(const VectorXt& state) const = 0;
     virtual MatrixXt stateTransitionJacobian(const VectorXt& state, const VectorXt& control) const = 0;
 };
-
-} // namespace ekf
 
 } // namespace s3l::model
