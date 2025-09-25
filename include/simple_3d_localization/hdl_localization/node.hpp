@@ -80,15 +80,15 @@ public:
 
         if (!imu_initialized_) {
             RCLCPP_INFO(this->get_logger(), "Waiting for IMU initialization...");
-            initial_g_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
-                "imu_init/gravity", rclcpp::QoS(1).transient_local(),
-                std::bind(&LocalizationNode::initialGravityCallback, this, std::placeholders::_1));
+            // initial_g_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
+            //     "imu_init/gravity", rclcpp::QoS(1).transient_local(),
+            //     std::bind(&LocalizationNode::initialGravityCallback, this, std::placeholders::_1));
             initial_ba_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
                 "imu_init/accel_bias", rclcpp::QoS(1).transient_local(),
                 std::bind(&LocalizationNode::initialAccelBiasCallback, this, std::placeholders::_1));
-            // initial_bg_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
-            //     "imu_init/gyro_bias", rclcpp::QoS(1).transient_local(),
-            //     std::bind(&LocalizationNode::initialGyroBiasCallback, this, std::placeholders::_1));
+            initial_bg_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
+                "imu_init/gyro_bias", rclcpp::QoS(1).transient_local(),
+                std::bind(&LocalizationNode::initialGyroBiasCallback, this, std::placeholders::_1));
         } else if (imu_initialized_) {
             RCLCPP_INFO(this->get_logger(), "IMU initialization is skipped. Using provided parameters.");
         } else if (!use_imu_) {
@@ -551,24 +551,24 @@ private:
     }
 
 
-    void initialGravityCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr& _msg) {
-        // imu_gravity_ = Eigen::Vector3f(msg->x, msg->y, msg->z);
-        imu_gravity_ = Eigen::Vector3f(0, 0, -9.80665); // TODO: imu_initializer(local) ⇔ this (global)の差をなんとかする
-        has_init_g = true;
-        checkImuInitRead();
-    }
+    // void initialGravityCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr& _msg) {
+    //     // imu_gravity_ = Eigen::Vector3f(msg->x, msg->y, msg->z);
+    //     imu_gravity_ = Eigen::Vector3f(0, 0, -9.80665); // TODO: imu_initializer(local) ⇔ this (global)の差をなんとかする
+    //     has_init_g = true;
+    //     checkImuInitRead();
+    // }
     void initialAccelBiasCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr& msg) {
         imu_accel_bias_ = Eigen::Vector3f(msg->x, msg->y, msg->z);
         has_init_ba = true;
         checkImuInitRead();
     }
-    // void initialGyroBiasCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr& msg) {
-    //     imu_gyro_bias_ = Eigen::Vector3f(msg->x, msg->y, msg->z);
-    //     has_init_bg = true;
-    //     checkImuInitRead();
-    // }
+    void initialGyroBiasCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr& msg) {
+        imu_gyro_bias_ = Eigen::Vector3f(msg->x, msg->y, msg->z);
+        has_init_bg = true;
+        checkImuInitRead();
+    }
     void checkImuInitRead() {
-        if (!imu_initialized_ && has_init_ba && has_init_g) {
+        if (!imu_initialized_ && has_init_ba && has_init_bg) {
             imu_initialized_ = true;
             RCLCPP_INFO(this->get_logger(), "IMU initialized with provided parameters.");
             RCLCPP_INFO(this->get_logger(), "  Gravity: [%f, %f, %f]", imu_gravity_.x(), imu_gravity_.y(), imu_gravity_.z());
@@ -576,8 +576,9 @@ private:
             RCLCPP_INFO(this->get_logger(), "  Gyro Bias: [%f, %f, %f]", imu_gyro_bias_.x(), imu_gyro_bias_.y(), imu_gyro_bias_.z());
 
             // shutdown subscribers
-            initial_g_sub_.reset();
+            // initial_g_sub_.reset();
             initial_ba_sub_.reset();
+            initial_bg_sub_.reset();
 
             if (est_initialized_) {
                 RCLCPP_INFO(this->get_logger(), "Updating pose estimator with IMU parameters.");
@@ -616,8 +617,9 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr globalmap_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr initialpose_sub_;
 
-    rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr initial_g_sub_;
+    // rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr initial_g_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr initial_ba_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr initial_bg_sub_;
     Eigen::Vector3f imu_gravity_{0, 0, -9.80665}, imu_accel_bias_{0, 0, 0}, imu_gyro_bias_{0, 0, 0};
     bool has_init_g{false}, has_init_ba{false}, has_init_bg{false};
 

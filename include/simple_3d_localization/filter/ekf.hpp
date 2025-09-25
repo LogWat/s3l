@@ -10,7 +10,7 @@ namespace s3l::filter {
 class ExtendedKalmanFilterX : public KalmanFilterX {
 public:
     explicit ExtendedKalmanFilterX(
-        model::ekf::EKFSystemModel& model,
+        model::EKFSystemModel& model,
         const int state_dim,
         const VectorXt& initial_state,
         const MatrixXt& initial_cov,
@@ -69,7 +69,7 @@ public:
 
 private:
     const int state_dim_;
-    model::ekf::EKFSystemModel& model_; // System model
+    model::EKFSystemModel& model_; // System model
     VectorXt X_; // State vector
     MatrixXt P_; // State covariance matrix
     MatrixXt Q_; // Process noise covariance

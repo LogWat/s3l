@@ -62,8 +62,8 @@ public:
         Vector3t g = state.middleRows(16, 3);
         Vector3t acc_ = raw_acc - acc_bias;
         Vector3t acc = qt * acc_;
-        next_state.middleRows(3, 3) = vt + (acc + g) * dt_;
-        // next_state.middleRows(3, 3) = vt; // + (acc - g) * dt_;		// acceleration didn't contribute to accuracy due to large noise
+        // next_state.middleRows(3, 3) = vt + (acc + g) * dt_;
+        next_state.middleRows(3, 3) = vt; // + (acc - g) * dt_;		// acceleration didn't contribute to accuracy due to large noise
 
         // orientation
         Vector3t gyro = raw_gyro - gyro_bias;

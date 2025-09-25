@@ -65,11 +65,11 @@ public:
             // pose_system の stateベクトルの次元
             // 位置(3) + 速度(3) + 姿勢(4) + bias(3) + bias_gyro(3) + gravity(3) = 19
             process_noise_ = MatrixXt::Identity(19, 19);
-            process_noise_.middleRows(0, 3) *= 1.0;
-            process_noise_.middleRows(3, 3) *= 1.0;
-            process_noise_.middleRows(6, 4) *= 0.5;
-            process_noise_.middleRows(10, 3) *= 1e-3;
-            process_noise_.middleRows(13, 3) *= 1e-3;
+            process_noise_.middleRows(0, 3) *= 0.25;
+            process_noise_.middleRows(3, 3) *= 0.25;
+            process_noise_.middleRows(6, 4) *= 0.25;
+            process_noise_.middleRows(10, 3) *= 1e-6;
+            process_noise_.middleRows(13, 3) *= 1e-5;
             process_noise_.middleRows(16, 3) *= 1e-9;
 
             // 初期状態
@@ -101,8 +101,8 @@ public:
 
         // 位置(3) + 姿勢(4) = 7
         measurement_noise_ = MatrixXt::Identity(7, 7);
-        measurement_noise_.middleRows(0, 3) *= 0.1;
-        measurement_noise_.middleRows(3, 4) *= 0.05;
+        measurement_noise_.middleRows(0, 3) *= 0.01;
+        measurement_noise_.middleRows(3, 4) *= 0.01;
 
 
         if (filter_type_ == FilterType::UKF) {
@@ -151,7 +151,12 @@ public:
         filter_->setDt(dt);
         filter_->setProcessNoise(process_noise_ * dt);
 
-        VectorXt u(6); u.head<3>() = acc; u.tail<3>() = gyro;
+        // test mid360 coord ned?
+        float coeff = (1.0 / 6.0);
+        Vector3t gyro_m(gyro.x() * coeff, gyro.y() * coeff, gyro.z() * coeff);
+
+        VectorXt u(6); u.head<3>() = acc; u.tail<3>() = gyro_m;
+
         filter_->predict(u);
 
         auto& state_after = const_cast<VectorXt&>(filter_->getState());
@@ -177,10 +182,20 @@ public:
         Matrix4t init_guess = Matrix4t::Identity();
 
         init_guess = imu_guess = matrix();
+        // init_guess = last_observation_; // 前回の観測値を初期値とする
+        RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
+                    "Initial guess for alignment: t = [%.3f, %.3f, %.3f], q = [%.3f, %.3f, %.3f, %.3f]",
+                    imu_guess(0, 3), imu_guess(1, 3), imu_guess(2, 3),
+                    Quaterniont(imu_guess.block<3, 3>(0, 0)).w(),
+                    Quaterniont(imu_guess.block<3, 3>(0, 0)).x(),
+                    Quaterniont(imu_guess.block<3, 3>(0, 0)).y(),
+                    Quaterniont(imu_guess.block<3, 3>(0, 0)).z());
 
         pcl::PointCloud<PointT>::Ptr aligned(new pcl::PointCloud<PointT>());
         registration_->setInputSource(cloud);
         registration_->align(*aligned, init_guess); // 事前に設定されているregistration方法でalign (NDT_OMP, GICP, etc.)
+
+        // return aligned;
 
         Matrix4t trans = registration_->getFinalTransformation();
         bool converged = registration_->hasConverged();
@@ -190,6 +205,19 @@ public:
                         "Alignment failed (converged=%d, finite=%d). Using init guess.",
                         converged ? 1 : 0, trans.allFinite() ? 1 : 0);
             trans = init_guess;
+            return aligned;
+        }
+
+        // score?
+        double score = registration_->getFitnessScore();
+        RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
+                    "Alignment succeeded (score=%.6f).", score);
+        const double max_fitness_score = 1.0; // TODO: parameterize
+        if (score > max_fitness_score) {
+            RCLCPP_WARN(rclcpp::get_logger("PoseEstimator"),
+                        "Fitness score is too high (%.3f > %.3f). Rejecting observation.",
+                        score, max_fitness_score);
+            return aligned;
         }
 
         Vector3t p = trans.block<3, 1>(0, 3);
@@ -256,6 +284,10 @@ public:
                     wo_pred_error_ = no_guess.inverse() * registration_->getFinalTransformation();  
                     return aligned;
                 }
+            } else {
+                RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
+                            "Mahalanobis accept d2=%.3f <= thresh=%.3f (df=6)",
+                            last_mahalanobis_d2_, mahalanobis_threshold_);
             }
             // --------- End Gate -------------------------
         }
