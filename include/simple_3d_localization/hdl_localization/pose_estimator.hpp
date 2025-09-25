@@ -65,9 +65,9 @@ public:
             // pose_system の stateベクトルの次元
             // 位置(3) + 速度(3) + 姿勢(4) + bias(3) + bias_gyro(3) + gravity(3) = 19
             process_noise_ = MatrixXt::Identity(19, 19);
-            process_noise_.middleRows(0, 3) *= 0.25;
-            process_noise_.middleRows(3, 3) *= 0.25;
-            process_noise_.middleRows(6, 4) *= 0.25;
+            process_noise_.middleRows(0, 3) *= 1.0;
+            process_noise_.middleRows(3, 3) *= 1.0;
+            process_noise_.middleRows(6, 4) *= 0.5;
             process_noise_.middleRows(10, 3) *= 1e-6;
             process_noise_.middleRows(13, 3) *= 1e-5;
             process_noise_.middleRows(16, 3) *= 1e-9;
@@ -102,7 +102,7 @@ public:
         // 位置(3) + 姿勢(4) = 7
         measurement_noise_ = MatrixXt::Identity(7, 7);
         measurement_noise_.middleRows(0, 3) *= 0.01;
-        measurement_noise_.middleRows(3, 4) *= 0.01;
+        measurement_noise_.middleRows(3, 4) *= 0.001;
 
 
         if (filter_type_ == FilterType::UKF) {
@@ -183,13 +183,13 @@ public:
 
         init_guess = imu_guess = matrix();
         // init_guess = last_observation_; // 前回の観測値を初期値とする
-        RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
-                    "Initial guess for alignment: t = [%.3f, %.3f, %.3f], q = [%.3f, %.3f, %.3f, %.3f]",
-                    imu_guess(0, 3), imu_guess(1, 3), imu_guess(2, 3),
-                    Quaterniont(imu_guess.block<3, 3>(0, 0)).w(),
-                    Quaterniont(imu_guess.block<3, 3>(0, 0)).x(),
-                    Quaterniont(imu_guess.block<3, 3>(0, 0)).y(),
-                    Quaterniont(imu_guess.block<3, 3>(0, 0)).z());
+        // RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
+        //             "Initial guess for alignment: t = [%.3f, %.3f, %.3f], q = [%.3f, %.3f, %.3f, %.3f]",
+        //             imu_guess(0, 3), imu_guess(1, 3), imu_guess(2, 3),
+        //             Quaterniont(imu_guess.block<3, 3>(0, 0)).w(),
+        //             Quaterniont(imu_guess.block<3, 3>(0, 0)).x(),
+        //             Quaterniont(imu_guess.block<3, 3>(0, 0)).y(),
+        //             Quaterniont(imu_guess.block<3, 3>(0, 0)).z());
 
         pcl::PointCloud<PointT>::Ptr aligned(new pcl::PointCloud<PointT>());
         registration_->setInputSource(cloud);
@@ -209,16 +209,16 @@ public:
         }
 
         // score?
-        double score = registration_->getFitnessScore();
-        RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
-                    "Alignment succeeded (score=%.6f).", score);
-        const double max_fitness_score = 1.0; // TODO: parameterize
-        if (score > max_fitness_score) {
-            RCLCPP_WARN(rclcpp::get_logger("PoseEstimator"),
-                        "Fitness score is too high (%.3f > %.3f). Rejecting observation.",
-                        score, max_fitness_score);
-            return aligned;
-        }
+        // double score = registration_->getFitnessScore();
+        // RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
+        //             "Alignment succeeded (score=%.6f).", score);
+        // const double max_fitness_score = 1.0; // TODO: parameterize
+        // if (score > max_fitness_score) {
+        //     RCLCPP_WARN(rclcpp::get_logger("PoseEstimator"),
+        //                 "Fitness score is too high (%.3f > %.3f). Rejecting observation.",
+        //                 score, max_fitness_score);
+        //     return aligned;
+        // }
 
         Vector3t p = trans.block<3, 1>(0, 3);
         Quaterniont q(trans.block<3, 3>(0, 0));
@@ -284,11 +284,12 @@ public:
                     wo_pred_error_ = no_guess.inverse() * registration_->getFinalTransformation();  
                     return aligned;
                 }
-            } else {
-                RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
-                            "Mahalanobis accept d2=%.3f <= thresh=%.3f (df=6)",
-                            last_mahalanobis_d2_, mahalanobis_threshold_);
-            }
+            } 
+            // else {
+            //     RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
+            //                 "Mahalanobis accept d2=%.3f <= thresh=%.3f (df=6)",
+            //                 last_mahalanobis_d2_, mahalanobis_threshold_);
+            // }
             // --------- End Gate -------------------------
         }
 
@@ -302,17 +303,17 @@ public:
         else q_corr = Quaterniont::Identity();
 
         // DEBUG LOG
-        if (!use_odom_) {
-            RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
-                        "Corrected: pos=(%.3f, %.3f, %.3f), quat=(%.3f, %.3f, %.3f, %.3f), vel=(%.3f, %.3f, %.3f), bias_acc=(%.6f, %.6f, %.6f), bias_gyro=(%.6f, %.6f, %.6f), gravity=(%.3f, %.3f, %.3f)",
-                        state_after[0], state_after[1], state_after[2],
-                        state_after[6], state_after[7], state_after[8], state_after[9],
-                        state_after[3], state_after[4], state_after[5],
-                        state_after[10], state_after[11], state_after[12],
-                        state_after[13], state_after[14], state_after[15],
-                        state_after[16], state_after[17], state_after[18]
-            );
-        }
+        // if (!use_odom_) {
+        //     RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
+        //                 "Corrected: pos=(%.3f, %.3f, %.3f), quat=(%.3f, %.3f, %.3f, %.3f), vel=(%.3f, %.3f, %.3f), bias_acc=(%.6f, %.6f, %.6f), bias_gyro=(%.6f, %.6f, %.6f), gravity=(%.3f, %.3f, %.3f)",
+        //                 state_after[0], state_after[1], state_after[2],
+        //                 state_after[6], state_after[7], state_after[8], state_after[9],
+        //                 state_after[3], state_after[4], state_after[5],
+        //                 state_after[10], state_after[11], state_after[12],
+        //                 state_after[13], state_after[14], state_after[15],
+        //                 state_after[16], state_after[17], state_after[18]
+        //     );
+        // }
 
         imu_pred_error_ = imu_guess.inverse() * registration_->getFinalTransformation();
         last_correct_stamp_ = stamp;
