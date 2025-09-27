@@ -436,8 +436,7 @@ private:
         }
         for (const auto& imu_msg : local_imu) {
             const auto imu_stamp = rclcpp::Time(imu_msg->header.stamp.sec, imu_msg->header.stamp.nanosec);
-            if (imu_stamp < stamp) { // 過去のimuデータはバッファに戻す
-                std::lock_guard<std::mutex> lk(imu_buffer_mutex_);
+            if (imu_stamp > stamp) {
                 imu_buffer_.push_back(imu_msg);
                 continue;
             }
