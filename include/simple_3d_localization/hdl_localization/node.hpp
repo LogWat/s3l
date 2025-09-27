@@ -451,17 +451,6 @@ private:
                 RCLCPP_ERROR(this->get_logger(), "Pose prediction failed: %s", e.what());
             }
         }
-        auto imu_iter = imu_buffer_.begin();
-        for (; imu_iter != imu_buffer_.end(); ++imu_iter) {
-            const auto& imu_msg = *imu_iter;
-            const auto& imu_stamp = rclcpp::Time(imu_msg->header.stamp.sec, imu_msg->header.stamp.nanosec);
-            if (imu_stamp > stamp) break;
-            Eigen::Vector3f acc(imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z);
-            Eigen::Vector3f gyro(imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z);
-            if (invert_acc_) acc = -acc;
-            if (invert_gyro_) gyro = -gyro;
-            pose_estimator_->predict(imu_stamp, acc, gyro);
-        }
 
         // correct ------------------------------------------------------
         auto aligned = pose_estimator_->correct(stamp, downsampled_cloud);

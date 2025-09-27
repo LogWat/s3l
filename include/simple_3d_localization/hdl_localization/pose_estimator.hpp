@@ -15,6 +15,7 @@
 #include <simple_3d_localization/model/ekf_odom_pose.hpp>
 #include <simple_3d_localization/model/ekf_pose.hpp>
 #include <simple_3d_localization/mahalanobis.hpp>
+#include <simple_3d_localization/matching_evaluator.hpp>
 
 namespace s3l
 {
@@ -65,12 +66,18 @@ public:
             // pose_system の stateベクトルの次元
             // 位置(3) + 速度(3) + 姿勢(4) + bias(3) + bias_gyro(3) + gravity(3) = 19
             process_noise_ = MatrixXt::Identity(19, 19);
-            process_noise_.middleRows(0, 3) *= 1.0;
-            process_noise_.middleRows(3, 3) *= 1.0;
-            process_noise_.middleRows(6, 4) *= 0.5;
+            process_noise_.middleRows(0, 3) *= std::pow(1.0, 2); // (1.0 m)^2 /s
+            process_noise_.middleRows(3, 3) *= std::pow(1.0, 2); // (1.0 m/s)^2 /s
+            process_noise_.middleRows(6, 4) *= std::pow(10.0 * M_PI / 180.0, 2); // (10 deg)^2 /s
             process_noise_.middleRows(10, 3) *= 1e-6;
-            process_noise_.middleRows(13, 3) *= 1e-5;
+            process_noise_.middleRows(13, 3) *= 1e-6;
             process_noise_.middleRows(16, 3) *= 1e-9;
+
+            /** ** ICM40609 ** 
+             * Rate Noise Spectral Density: 4.5 mdps/√Hz = 0.0045 dps/√Hz
+             * Power Spectral Density: 100 μg/√Hz = 0.0001 g/√Hz 
+             * Zero-G Level Change vs. Temperature (バイアス安定性): ±0.15 mg/°C
+            */
 
             // 初期状態
             mean = VectorXt::Zero(19);
@@ -103,6 +110,7 @@ public:
         measurement_noise_ = MatrixXt::Identity(7, 7);
         measurement_noise_.middleRows(0, 3) *= 0.01;
         measurement_noise_.middleRows(3, 4) *= 0.001;
+        measurement_noise_base_ = measurement_noise_;
 
 
         if (filter_type_ == FilterType::UKF) {
@@ -151,12 +159,7 @@ public:
         filter_->setDt(dt);
         filter_->setProcessNoise(process_noise_ * dt);
 
-        // test mid360 coord ned?
-        float coeff = (1.0 / 6.0);
-        Vector3t gyro_m(gyro.x() * coeff, gyro.y() * coeff, gyro.z() * coeff);
-
-        VectorXt u(6); u.head<3>() = acc; u.tail<3>() = gyro_m;
-
+        VectorXt u(6); u.head<3>() = acc; u.tail<3>() = gyro;
         filter_->predict(u);
 
         auto& state_after = const_cast<VectorXt&>(filter_->getState());
@@ -177,25 +180,16 @@ public:
 
         last_correct_stamp_ = stamp;
 
-        Matrix4t no_guess = last_observation_;
+        Matrix4t prev_observation = last_observation_;
+        Matrix4t no_guess = prev_observation;
         Matrix4t imu_guess;
         Matrix4t init_guess = Matrix4t::Identity();
 
         init_guess = imu_guess = matrix();
-        // init_guess = last_observation_; // 前回の観測値を初期値とする
-        // RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
-        //             "Initial guess for alignment: t = [%.3f, %.3f, %.3f], q = [%.3f, %.3f, %.3f, %.3f]",
-        //             imu_guess(0, 3), imu_guess(1, 3), imu_guess(2, 3),
-        //             Quaterniont(imu_guess.block<3, 3>(0, 0)).w(),
-        //             Quaterniont(imu_guess.block<3, 3>(0, 0)).x(),
-        //             Quaterniont(imu_guess.block<3, 3>(0, 0)).y(),
-        //             Quaterniont(imu_guess.block<3, 3>(0, 0)).z());
 
         pcl::PointCloud<PointT>::Ptr aligned(new pcl::PointCloud<PointT>());
         registration_->setInputSource(cloud);
         registration_->align(*aligned, init_guess); // 事前に設定されているregistration方法でalign (NDT_OMP, GICP, etc.)
-
-        // return aligned;
 
         Matrix4t trans = registration_->getFinalTransformation();
         bool converged = registration_->hasConverged();
@@ -208,18 +202,6 @@ public:
             return aligned;
         }
 
-        // score?
-        // double score = registration_->getFitnessScore();
-        // RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
-        //             "Alignment succeeded (score=%.6f).", score);
-        // const double max_fitness_score = 1.0; // TODO: parameterize
-        // if (score > max_fitness_score) {
-        //     RCLCPP_WARN(rclcpp::get_logger("PoseEstimator"),
-        //                 "Fitness score is too high (%.3f > %.3f). Rejecting observation.",
-        //                 score, max_fitness_score);
-        //     return aligned;
-        // }
-
         Vector3t p = trans.block<3, 1>(0, 3);
         Quaterniont q(trans.block<3, 3>(0, 0));
 
@@ -230,71 +212,88 @@ public:
         observation.middleRows(3, 4) = Vector4t(q.w(), q.x(), q.y(), q.z()).normalized();
         last_observation_ = trans;
 
+        // matching quality evaluation -----------------------------------------------------------------
+        last_metrics_ = scan_matching::evaluate<PointT>(
+            *registration_, aligned,
+            std::isfinite(registration_->getMaxCorrespondenceDistance())
+                ? registration_->getMaxCorrespondenceDistance()
+                : std::numeric_limits<double>::quiet_NaN());
+        measurement_noise_ = buildMeasurementNoise(last_metrics_.value());
+        if (!last_metrics_->reliable ||
+            last_metrics_->inlier_count < min_quality_inliers_ ||
+            last_metrics_->inlier_ratio < min_quality_inlier_ratio_ ||
+            last_metrics_->rmse > max_quality_rmse_) {
+            RCLCPP_WARN(rclcpp::get_logger("PoseEstimator"),
+                        "Scan matching quality too low (inliers=%zu, ratio=%.2f, rmse=%.3f m). Rejecting observation.",
+                        last_metrics_->inlier_count,
+                        last_metrics_->inlier_ratio,
+                        last_metrics_->rmse);
+            wo_pred_error_ = no_guess.inverse() * trans;
+            imu_pred_error_ = imu_guess.inverse() * trans;
+            consecutive_reject_count_++;
+            return aligned;
+        }
+        // ----------------------------------------------------------------------------------------------
+
 
        // --------- Mahalanobis Gate (6DOF) ----------
        if (use_mahalanobis_) {
-            // 残差 r6 = [ Δp ; rotvec(q_obs * q_pred^{-1}) ]
             Eigen::Matrix<double,6,1> r6;
-            {
-                const auto& s = filter_->getState();
-                // 予測姿勢
-                Eigen::Quaterniond q_pred(s[6], s[7], s[8], s[9]);
-                Eigen::Quaterniond q_obs(observation[3], observation[4], observation[5], observation[6]);
-                if (q_pred.coeffs().dot(q_obs.coeffs()) < 0.0) q_obs.coeffs() *= -1.0;
-                q_pred.normalize(); q_obs.normalize();
-                // 位置差
-                r6.head<3>() = (observation.head<3>() - s.head<3>()).cast<double>();
-                // 回転差
-                Eigen::Quaterniond q_err = q_obs * q_pred.conjugate();
-                Eigen::AngleAxisd aa(q_err);
-                Eigen::Vector3d rv = aa.axis() * aa.angle();
-                if (!rv.allFinite()) rv.setZero();
-                r6.tail<3>() = rv;
-            }
-            // 測定ノイズ 7x7 -> 6x6 射影（quat 部は等方化）
-            Eigen::Matrix<double,6,6> R6 = Eigen::Matrix<double,6,6>::Zero();
-            {
-                const auto& R7 = measurement_noise_;
-                if (R7.rows() >= 7 && R7.cols() >= 7) {
-                    R6.topLeftCorner<3,3>() = R7.topLeftCorner(3,3).cast<double>();
-                    double s = R7.block(3,3,4,4).trace() / 4.0;
-                    if (!(s > 0.0)) s = 1e-6;
-                    R6.bottomRightCorner<3,3>() = Eigen::Matrix3d::Identity() * s;
-                } else {
-                    R6.setIdentity();
-                }
-            }
-            // H: 位置3 + quat xyz を小角近似で使用
-            Eigen::Matrix<double,6,19> H = Eigen::Matrix<double,6,19>::Zero();
+            const auto& s = filter_->getState();
+            Eigen::Quaterniond q_pred(s[6], s[7], s[8], s[9]);
+            Eigen::Quaterniond q_obs(observation[3], observation[4], observation[5], observation[6]);
+            if (q_pred.coeffs().dot(q_obs.coeffs()) < 0.0) q_obs.coeffs() *= -1.0;
+            q_pred.normalize(); q_obs.normalize();
+
+            r6.head<3>() = (observation.head<3>() - s.head<3>()).cast<double>();
+            Eigen::Quaterniond q_err = q_obs * q_pred.conjugate();
+            Eigen::AngleAxisd aa(q_err);
+            Eigen::Vector3d rv = aa.axis() * aa.angle();
+            if (!rv.allFinite()) rv.setZero();
+            r6.tail<3>() = rv;
+
+            Eigen::Matrix3d Jr_inv = rightJacobianInverseSO3(rv);
+            Eigen::Matrix<double,6,Eigen::Dynamic> H(6, filter_->getState().size());
+            H.setZero();
             H.block<3,3>(0,0) = Eigen::Matrix3d::Identity();
-            H.block<3,3>(3,7) = Eigen::Matrix3d::Identity(); // quat x,y,z
+            H.block<3,3>(3,7) = Jr_inv * 2.0 * Eigen::Matrix3d::Identity();
+
+            Eigen::Matrix<double,6,6> R6 = Eigen::Matrix<double,6,6>::Zero();
+            const auto& R7 = measurement_noise_;
+            if (R7.rows() >= 7 && R7.cols() >= 7) {
+                R6.topLeftCorner<3,3>() = R7.topLeftCorner(3,3).cast<double>();
+                Eigen::Matrix4d quat_cov = R7.block(3,3,4,4).cast<double>();
+                Eigen::Matrix3d rot_block = quat_cov.block<3,3>(1,1) * 4.0;
+                R6.bottomRightCorner<3,3>() = 0.5 * (rot_block + rot_block.transpose());
+            } else {
+                R6.setIdentity();
+                R6.topLeftCorner<3,3>() *= translation_noise_floor_;
+                R6.bottomRightCorner<3,3>() *= rotation_noise_floor_;
+            }
+
             Eigen::Matrix<double,6,6> S = H * filter_->getCovariance().cast<double>() * H.transpose() + R6;
-            for (int i=0;i<6;i++) if (S(i,i) < 1e-12) S(i,i) += 1e-9; // 数値安定化
+            for (int i = 0; i < 6; ++i) {
+                if (S(i, i) < 1e-12) S(i, i) += 1e-9;
+            }
 
             Eigen::VectorXd r6v = r6;
-            last_mahalanobis_d2_ = squaredMahalanobis(r6v, Eigen::VectorXd::Zero(6), S);
+            Eigen::VectorXd zero = Eigen::VectorXd::Zero(6);
+            last_mahalanobis_d2_ = squaredMahalanobis(r6v, zero, S);
 
             if (last_mahalanobis_d2_ > mahalanobis_threshold_) {
                 RCLCPP_WARN(rclcpp::get_logger("PoseEstimator"),
                             "Mahalanobis reject d2=%.3f > thresh=%.3f (df=6)",
                             last_mahalanobis_d2_, mahalanobis_threshold_);
-                // 初期状態では観測が不安定なので、rejectしても状態を更新する
                 consecutive_reject_count_++;
-                if (consecutive_reject_count_ > init_consecutive_reject_) {
-                    wo_pred_error_ = no_guess.inverse() * registration_->getFinalTransformation();  
-                    return aligned;
-                }
-            } 
-            // else {
-            //     RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
-            //                 "Mahalanobis accept d2=%.3f <= thresh=%.3f (df=6)",
-            //                 last_mahalanobis_d2_, mahalanobis_threshold_);
-            // }
-            // --------- End Gate -------------------------
+                wo_pred_error_ = no_guess.inverse() * trans;
+                imu_pred_error_ = imu_guess.inverse() * trans;
+                return aligned;
+            }
         }
+        // --------------------------------------------
 
-        wo_pred_error_ = no_guess.inverse() * registration_->getFinalTransformation();
-
+        filter_->setMeasurementNoise(measurement_noise_);
+        wo_pred_error_ = no_guess.inverse() * trans;
         filter_->correct(observation);
 
         auto& state_after = const_cast<VectorXt&>(filter_->getState());
@@ -302,20 +301,9 @@ public:
         if (std::isfinite(q_corr.w()) && q_corr.norm() > 1e-8f) q_corr.normalize();
         else q_corr = Quaterniont::Identity();
 
-        // DEBUG LOG
-        // if (!use_odom_) {
-        //     RCLCPP_INFO(rclcpp::get_logger("PoseEstimator"),
-        //                 "Corrected: pos=(%.3f, %.3f, %.3f), quat=(%.3f, %.3f, %.3f, %.3f), vel=(%.3f, %.3f, %.3f), bias_acc=(%.6f, %.6f, %.6f), bias_gyro=(%.6f, %.6f, %.6f), gravity=(%.3f, %.3f, %.3f)",
-        //                 state_after[0], state_after[1], state_after[2],
-        //                 state_after[6], state_after[7], state_after[8], state_after[9],
-        //                 state_after[3], state_after[4], state_after[5],
-        //                 state_after[10], state_after[11], state_after[12],
-        //                 state_after[13], state_after[14], state_after[15],
-        //                 state_after[16], state_after[17], state_after[18]
-        //     );
-        // }
-
-        imu_pred_error_ = imu_guess.inverse() * registration_->getFinalTransformation();
+        imu_pred_error_ = imu_guess.inverse() * trans;
+        last_observation_ = trans;
+        consecutive_reject_count_ = 0;
         last_correct_stamp_ = stamp;
         return aligned;
     }
@@ -367,6 +355,60 @@ public:
     }
 
 private:
+    // Covarianceの正定値化
+    template <int N>
+    static Eigen::Matrix<double, N, N> regularizeCovariance(const Eigen::Matrix<double, N, N>& cov, double floor) {
+        Eigen::Matrix<double, N, N> sym = 0.5 * (cov + cov.transpose());
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> solver(sym);
+        Eigen::Matrix<double, N, 1> vals = solver.eigenvalues();
+        for (int i = 0; i < N; ++i) {
+            if (!std::isfinite(vals[i]) || vals[i] < floor) {
+                vals[i] = floor;
+            }
+        }
+        return solver.eigenvectors() * vals.asDiagonal() * solver.eigenvectors().transpose();
+    }
+
+    // SO(3)の右ヤコビアンの逆元
+    static Eigen::Matrix3d rightJacobianInverseSO3(const Eigen::Vector3d& phi) {
+        const double theta = phi.norm();
+        const Eigen::Matrix3d I = Eigen::Matrix3d::Identity();
+        const Eigen::Matrix3d A = Sophus::SO3d::hat(phi);
+        if (theta < 1e-5) return I + 0.5 * A + (1.0 / 12.0) * A * A;
+
+        const double half = 0.5 * theta;
+        const double cot_half = std::cos(half) / std::sin(half);
+        const double coeff = (1.0 - 0.5 * theta * cot_half) / (theta * theta);
+        return I + 0.5 * A + coeff * A * A; // (式. 184 in "Quanternion kinematics for the error-state Kalman filter")
+    }
+
+    // ScanMatchingMetrics から観測ノイズの共分散行列を構築
+    MatrixXt buildMeasurementNoise(const scan_matching::ScanMatchingMetrics<PointT>& metrics) const {
+        if (!metrics.reliable) {
+            return measurement_noise_base_ * poor_quality_noise_scale_;
+        }
+
+        MatrixXt cov = MatrixXt::Zero(7, 7);
+        Eigen::Matrix3d t_cov = regularizeCovariance<3>(metrics.translation_covariance, translation_noise_floor_);
+        Eigen::Matrix3d r_cov = regularizeCovariance<3>(metrics.rotation_covariance, rotation_noise_floor_);
+
+        cov.block<3,3>(0,0) = t_cov.cast<SystemType>();
+        Eigen::Matrix4d quat_cov = Eigen::Matrix4d::Zero();
+        quat_cov(0,0) = rotation_noise_floor_;
+        quat_cov.block<3,3>(1,1) = 0.25 * r_cov;
+        const auto quat_cov_reg = regularizeCovariance<4>(quat_cov, rotation_noise_floor_ * 0.25);
+        cov.block<4,4>(3,3) = quat_cov_reg.cast<SystemType>();
+
+        if (metrics.inlier_count < min_quality_inliers_ ||
+            metrics.inlier_ratio < min_quality_inlier_ratio_ ||
+            metrics.rmse > max_quality_rmse_) {
+            cov.block<3,3>(0,0) *= poor_quality_noise_scale_;
+            cov.block<4,4>(3,3) *= poor_quality_noise_scale_;
+        }
+
+        return cov;
+    }
+
     rclcpp::Time init_stamp_;             // when the estimator was initialized
     rclcpp::Time prev_stamp_;             // when the estimator was updated last time
     rclcpp::Time last_correct_stamp_;      // when the estimator performed the correct step
@@ -396,6 +438,16 @@ private:
     const int init_consecutive_reject_{5};
 
     bool use_odom_{false}; // odomを使う場合は別モデル
+
+    // matching evaluator
+    MatrixXt measurement_noise_base_;
+    double translation_noise_floor_{1e-4};       // 並進誤差の下限 (m^2)
+    double rotation_noise_floor_{1e-6};          // 回転誤差の下限 (rad^2)
+    double poor_quality_noise_scale_{25.0};      // 低品質時のスケール
+    std::size_t min_quality_inliers_{30};        // 最小品質インライア数
+    double min_quality_inlier_ratio_{0.25};      // 最小品質インライア比
+    double max_quality_rmse_{0.6};               // 最大品質RMSE
+    std::optional<scan_matching::ScanMatchingMetrics<PointT>> last_metrics_;
 };
 
 } // namespace hdl_localization
