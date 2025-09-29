@@ -66,7 +66,7 @@ public:
         use_detail_gating_ = this->declare_parameter<bool>("use_detail_gating", false);
         mahalanobis_threshold_ = this->declare_parameter<double>("mahalanobis_threshold", 33.11);
         use_imu_ = this->declare_parameter<bool>("use_imu", true);
-        use_odom_ = this->declare_parameter<bool>("use_odom", false);
+        use_odom_ = this->declare_parameter<bool>("odometry_based_prediction", false);
         imu_initialized_ = use_odom_ ? true : imu_initialized_;
 
         ndt_neighbor_search_radius_ = this->declare_parameter<double>("ndt_neighbor_search_radius", 2.0);
@@ -109,6 +109,9 @@ public:
             filter_type_ = FilterType::UKF;
         }
 
+        imu_buffer_.clear();
+        lio_odom_buffer_.clear();
+
         // registation method (ndt_omp, ndt_cuda, gicp, vgicp) setup
         std::lock_guard<std::mutex> lock(reg_mutex_);
         registration_ = createRegistration();
@@ -119,6 +122,9 @@ public:
         imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
             "imu/data", rclcpp::SensorDataQoS(),
             std::bind(&LocalizationNode::imuCallback, this, std::placeholders::_1));
+        lio_odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+            "lio_sam/odometry", rclcpp::SensorDataQoS(),
+            std::bind(&LocalizationNode::lioOdomCallback, this, std::placeholders::_1));
         points_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             "points_raw", rclcpp::SensorDataQoS(),
             std::bind(&LocalizationNode::pointsCallback, this, std::placeholders::_1));
@@ -375,6 +381,12 @@ private:
         std::lock_guard<std::mutex> lock(imu_buffer_mutex_);
         imu_buffer_.push_back(msg);
     }
+
+    void lioOdomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr& msg) {
+        std::lock_guard<std::mutex> lock(lio_odom_mutex_);
+        lio_odom_buffer_.push_back(msg);
+    }
+
     void pointsCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg) {
         if(!globalmap_ || globalmap_->empty()) {
             RCLCPP_WARN(this->get_logger(), "Global map is not set yet. Ignoring point cloud.");
@@ -420,36 +432,68 @@ private:
         last_scan_ = downsampled_cloud;
 
         // predict ------------------------------------------------------
-        std::vector<sensor_msgs::msg::Imu::ConstSharedPtr> local_imu;
-        {
-            std::lock_guard<std::mutex> lk(imu_buffer_mutex_);
-            local_imu.swap(imu_buffer_);
-        }
-        // 時系列になるように
-        std::sort(local_imu.begin(), local_imu.end(), [](const auto & a, const auto & b) {
-            rclcpp::Time ta(a->header.stamp.sec, a->header.stamp.nanosec);
-            rclcpp::Time tb(b->header.stamp.sec, b->header.stamp.nanosec);
-            return ta < tb;
-        });
-        std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
-        if (!pose_estimator_) {
-            RCLCPP_ERROR(this->get_logger(), "Waiting for initial pose input!");
-            return;
-        }
-        for (const auto& imu_msg : local_imu) {
-            const auto imu_stamp = rclcpp::Time(imu_msg->header.stamp.sec, imu_msg->header.stamp.nanosec);
-            if (imu_stamp > stamp) {
-                imu_buffer_.push_back(imu_msg);
-                continue;
+        if (use_odom_) {
+            std::vector<nav_msgs::msg::Odometry::ConstSharedPtr> local_lio_odom;
+            {
+                std::lock_guard<std::mutex> lk(lio_odom_mutex_);
+                local_lio_odom.swap(lio_odom_buffer_);
             }
-            Eigen::Vector3f acc(imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z);
-            Eigen::Vector3f gyro(imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z);
-            if (invert_acc_) acc = -acc;
-            if (invert_gyro_) gyro = -gyro;
-            try {
-                pose_estimator_->predict(imu_stamp, acc, gyro);
-            } catch (const std::exception & e) {
-                RCLCPP_ERROR(this->get_logger(), "Pose prediction failed: %s", e.what());
+            std::sort(local_lio_odom.begin(), local_lio_odom.end(), [](const auto & a, const auto & b) {
+                rclcpp::Time ta(a->header.stamp.sec, a->header.stamp.nanosec);
+                rclcpp::Time tb(b->header.stamp.sec, b->header.stamp.nanosec);
+                return ta < tb;
+            });
+            std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
+            if (!pose_estimator_) {
+                RCLCPP_ERROR(this->get_logger(), "Waiting for initial pose input!");
+                return;
+            }
+            for (const auto& odom_msg : local_lio_odom) {
+                const auto odom_stamp = rclcpp::Time(odom_msg->header.stamp.sec, odom_msg->header.stamp.nanosec);
+                if (odom_stamp > stamp) {
+                    lio_odom_buffer_.push_back(odom_msg);
+                    continue;
+                }
+                Eigen::Vector3f vel(odom_msg->twist.twist.linear.x, odom_msg->twist.twist.linear.y, odom_msg->twist.twist.linear.z);
+                Eigen::Vector3f omega(odom_msg->twist.twist.angular.x, odom_msg->twist.twist.angular.y, odom_msg->twist.twist.angular.z);
+                try {
+                    pose_estimator_->predict(odom_stamp, vel, omega);
+                } catch (const std::exception & e) {
+                    RCLCPP_ERROR(this->get_logger(), "Pose prediction failed: %s", e.what());
+                }
+            }
+        } else {
+            std::vector<sensor_msgs::msg::Imu::ConstSharedPtr> local_imu;
+            {
+                std::lock_guard<std::mutex> lk(imu_buffer_mutex_);
+                local_imu.swap(imu_buffer_);
+            }
+            // 時系列になるように
+            std::sort(local_imu.begin(), local_imu.end(), [](const auto & a, const auto & b) {
+                rclcpp::Time ta(a->header.stamp.sec, a->header.stamp.nanosec);
+                rclcpp::Time tb(b->header.stamp.sec, b->header.stamp.nanosec);
+                return ta < tb;
+            });
+            std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
+            if (!pose_estimator_) {
+                RCLCPP_ERROR(this->get_logger(), "Waiting for initial pose input!");
+                return;
+            }
+            for (const auto& imu_msg : local_imu) {
+                const auto imu_stamp = rclcpp::Time(imu_msg->header.stamp.sec, imu_msg->header.stamp.nanosec);
+                if (imu_stamp > stamp) {
+                    imu_buffer_.push_back(imu_msg);
+                    continue;
+                }
+                Eigen::Vector3f acc(imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z);
+                Eigen::Vector3f gyro(imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z);
+                if (invert_acc_) acc = -acc;
+                if (invert_gyro_) gyro = -gyro;
+                try {
+                    pose_estimator_->predict(imu_stamp, acc, gyro);
+                } catch (const std::exception & e) {
+                    RCLCPP_ERROR(this->get_logger(), "Pose prediction failed: %s", e.what());
+                }
             }
         }
 
@@ -605,6 +649,7 @@ private:
     double cool_time_duration_;
 
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr lio_odom_sub_;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr points_sub_;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr globalmap_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr initialpose_sub_;
@@ -626,6 +671,10 @@ private:
     // imu input buffer
     std::mutex imu_buffer_mutex_;
     std::vector<sensor_msgs::msg::Imu::ConstSharedPtr> imu_buffer_;
+
+    // lio_odom buffer
+    std::mutex lio_odom_mutex_;
+    std::vector<nav_msgs::msg::Odometry::ConstSharedPtr> lio_odom_buffer_;
 
     // globalmap and registration method
     pcl::PointCloud<PointT>::Ptr globalmap_;
