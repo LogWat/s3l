@@ -48,6 +48,7 @@
 
   <!-- remap args -->
   <arg name="imu_topic" default="/livox/imu"/>
+  <arg name="lio_odom_topic" default="/lio/odometry"/>
   <arg name="pointcloud_topic" default="velodyne_points"/>
   <arg name="global_map_topic" default="globalmap"/>
   <arg name="initialpose_topic" default="initialpose"/>
@@ -114,6 +115,7 @@
         <param name="init_quat" value="$(var init_quat)"/>
         <param name="cool_time_duration" value="$(var cool_time_duration)"/>
         <remap from="imu/data" to="$(var imu_topic)"/>
+        <remap from="lio/odometry" to="$(var lio_odom_topic)"/>
         <remap from="points_raw" to="$(var pointcloud_topic)"/>
         <remap from="global_map" to="$(var global_map_topic)"/>
         <remap from="initialpose" to="$(var initialpose_topic)"/>

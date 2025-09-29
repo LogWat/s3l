@@ -53,7 +53,7 @@ public:
 
         Vector3t p_next = p + v * dt_;
         
-        MatrixXt R = q.conjugate().toRotationMatrix(); // body -> world
+        MatrixXt R = q.toRotationMatrix(); // body -> world
         Vector3t vel_world = R * vel_body;
         Vector3t v_next = vel_world;
 

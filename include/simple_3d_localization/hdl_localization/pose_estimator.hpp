@@ -93,9 +93,9 @@ public:
             // odom_system の stateベクトルの次元
             // 位置(3) + 速度(3) + 姿勢(4) = 10
             process_noise_ = MatrixXt::Identity(10, 10);
-            process_noise_.middleRows(0, 3) *= 1.0;
-            process_noise_.middleRows(3, 3) *= 1.0;
-            process_noise_.middleRows(6, 4) *= 0.5;
+            process_noise_.middleRows(0, 3) *= std::pow(0.0075, 2); // (0.075 m)^2 /s
+            process_noise_.middleRows(3, 3) *= std::pow(0.75, 2); // (0.075 m/s)^2 /s
+            process_noise_.middleRows(6, 4) *= std::pow(1.0 * M_PI / 180.0, 2); // (1 deg)^2 /s
 
             // 初期状態
             mean = VectorXt::Zero(10);
@@ -108,8 +108,8 @@ public:
 
         // 位置(3) + 姿勢(4) = 7
         measurement_noise_ = MatrixXt::Identity(7, 7);
-        measurement_noise_.middleRows(0, 3) *= 0.01;
-        measurement_noise_.middleRows(3, 4) *= 0.001;
+        measurement_noise_.middleRows(0, 3) *= 0.25;
+        measurement_noise_.middleRows(3, 4) *= 0.25;
         measurement_noise_base_ = measurement_noise_;
 
 
@@ -190,6 +190,8 @@ public:
         pcl::PointCloud<PointT>::Ptr aligned(new pcl::PointCloud<PointT>());
         registration_->setInputSource(cloud);
         registration_->align(*aligned, init_guess); // 事前に設定されているregistration方法でalign (NDT_OMP, GICP, etc.)
+
+        return aligned;
 
         Matrix4t trans = registration_->getFinalTransformation();
         bool converged = registration_->hasConverged();
@@ -448,8 +450,8 @@ private:
 
     // matching evaluator
     MatrixXt measurement_noise_base_;
-    double translation_noise_floor_{1e-4};       // 並進誤差の下限 (m^2)
-    double rotation_noise_floor_{1e-6};          // 回転誤差の下限 (rad^2)
+    double translation_noise_floor_{0.25};       // 並進誤差の下限 (m^2)
+    double rotation_noise_floor_{0.25};          // 回転誤差の下限 (rad^2)
     double poor_quality_noise_scale_{25.0};      // 低品質時のスケール
     std::size_t min_quality_inliers_{30};        // 最小品質インライア数
     double min_quality_inlier_ratio_{0.25};      // 最小品質インライア比

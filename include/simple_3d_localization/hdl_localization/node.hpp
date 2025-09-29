@@ -68,6 +68,7 @@ public:
         use_imu_ = this->declare_parameter<bool>("use_imu", true);
         use_odom_ = this->declare_parameter<bool>("odometry_based_prediction", false);
         imu_initialized_ = use_odom_ ? true : imu_initialized_;
+        lio_odom_initialized_ = use_odom_ ? false : true;
 
         ndt_neighbor_search_radius_ = this->declare_parameter<double>("ndt_neighbor_search_radius", 2.0);
         ndt_resolution_ = this->declare_parameter<double>("ndt_resolution", 1.0);
@@ -119,12 +120,16 @@ public:
         tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(
             std::shared_ptr<rclcpp::Node>(this, [](auto) {}));
 
-        imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
-            "imu/data", rclcpp::SensorDataQoS(),
-            std::bind(&LocalizationNode::imuCallback, this, std::placeholders::_1));
-        lio_odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-            "lio_sam/odometry", rclcpp::SensorDataQoS(),
-            std::bind(&LocalizationNode::lioOdomCallback, this, std::placeholders::_1));
+        if (use_imu_) {
+            imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
+                "imu/data", rclcpp::SensorDataQoS(),
+                std::bind(&LocalizationNode::imuCallback, this, std::placeholders::_1));
+        }
+        if (use_odom_) {
+            lio_odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+                "lio/odometry", rclcpp::SensorDataQoS(),
+                std::bind(&LocalizationNode::lioOdomCallback, this, std::placeholders::_1));
+        }
         points_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             "points_raw", rclcpp::SensorDataQoS(),
             std::bind(&LocalizationNode::pointsCallback, this, std::placeholders::_1));
@@ -176,7 +181,7 @@ public:
             pose_estimator_->useDetailGating(use_detail_gating_);
             pose_estimator_->setMahalanobisThreshold(mahalanobis_threshold_);
             est_initialized_ = true;
-            if (imu_initialized_) {
+            if (imu_initialized_ && !use_odom_) {
                 RCLCPP_INFO(this->get_logger(), "Initializing pose estimator with IMU parameters.");
                 pose_estimator_->initializeWithBiasAndGravity(imu_gravity_, imu_accel_bias_, imu_gyro_bias_);
             }
@@ -385,6 +390,7 @@ private:
     void lioOdomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr& msg) {
         std::lock_guard<std::mutex> lock(lio_odom_mutex_);
         lio_odom_buffer_.push_back(msg);
+        if (!lio_odom_initialized_) lio_odom_initialized_ = true;
     }
 
     void pointsCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg) {
@@ -393,8 +399,12 @@ private:
             return;
         }
 
-        if (!imu_initialized_) {
+        if (use_imu_ && !imu_initialized_) {
             RCLCPP_WARN(this->get_logger(), "IMU is not initialized yet. Ignoring point cloud.");
+            return;
+        }
+        if (use_odom_ && !lio_odom_initialized_) {
+            RCLCPP_WARN(this->get_logger(), "LIO odometry is not initialized yet. Ignoring point cloud.");
             return;
         }
 
@@ -538,7 +548,7 @@ private:
         pose_estimator_->useDetailGating(use_detail_gating_);
         pose_estimator_->setMahalanobisThreshold(mahalanobis_threshold_);
         est_initialized_ = true;
-        if (imu_initialized_) {
+        if (imu_initialized_ && !use_odom_) {
             pose_estimator_->initializeWithBiasAndGravity(imu_gravity_, imu_accel_bias_, imu_gyro_bias_);
         }
     }
@@ -634,7 +644,7 @@ private:
 
     bool use_imu_, use_odom_;
 
-    bool use_imu_initializer_, imu_initialized_;
+    bool use_imu_initializer_, imu_initialized_, lio_odom_initialized_;
     bool invert_acc_, invert_gyro_;
     bool use_omp_;
     bool specify_init_pose_;
