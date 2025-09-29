@@ -63,6 +63,7 @@ public:
         num_threads_ = this->declare_parameter<int>("num_threads", 8);
         cool_time_duration_ = this->declare_parameter<double>("cool_time_duration", 0.5);
         use_mahalanobis_gating_ = this->declare_parameter<bool>("use_mahalanobis_gating", false);
+        use_detail_gating_ = this->declare_parameter<bool>("use_detail_gating", false);
         mahalanobis_threshold_ = this->declare_parameter<double>("mahalanobis_threshold", 33.11);
         use_imu_ = this->declare_parameter<bool>("use_imu", true);
         use_odom_ = this->declare_parameter<bool>("use_odom", false);
@@ -166,6 +167,7 @@ public:
                 registration_, pos, quat, use_odom_, filter_type_, cool_time_duration_
             );
             pose_estimator_->useMahalanobisGating(use_mahalanobis_gating_);
+            pose_estimator_->useDetailGating(use_detail_gating_);
             pose_estimator_->setMahalanobisThreshold(mahalanobis_threshold_);
             est_initialized_ = true;
             if (imu_initialized_) {
@@ -489,6 +491,7 @@ private:
             cool_time_duration_
         ));
         pose_estimator_->useMahalanobisGating(use_mahalanobis_gating_);
+        pose_estimator_->useDetailGating(use_detail_gating_);
         pose_estimator_->setMahalanobisThreshold(mahalanobis_threshold_);
         est_initialized_ = true;
         if (imu_initialized_) {
@@ -592,6 +595,7 @@ private:
     bool use_omp_;
     bool specify_init_pose_;
     bool use_mahalanobis_gating_;
+    bool use_detail_gating_;
 
     double mahalanobis_threshold_;
 

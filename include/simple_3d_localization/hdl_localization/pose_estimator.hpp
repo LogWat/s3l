@@ -219,19 +219,21 @@ public:
                 ? registration_->getMaxCorrespondenceDistance()
                 : std::numeric_limits<double>::quiet_NaN());
         measurement_noise_ = buildMeasurementNoise(last_metrics_.value());
-        if (!last_metrics_->reliable ||
-            last_metrics_->inlier_count < min_quality_inliers_ ||
-            last_metrics_->inlier_ratio < min_quality_inlier_ratio_ ||
-            last_metrics_->rmse > max_quality_rmse_) {
-            RCLCPP_WARN(rclcpp::get_logger("PoseEstimator"),
-                        "Scan matching quality too low (inliers=%zu, ratio=%.2f, rmse=%.3f m). Rejecting observation.",
-                        last_metrics_->inlier_count,
-                        last_metrics_->inlier_ratio,
-                        last_metrics_->rmse);
-            wo_pred_error_ = no_guess.inverse() * trans;
-            imu_pred_error_ = imu_guess.inverse() * trans;
-            consecutive_reject_count_++;
-            return aligned;
+        if (use_detail_gating_) {
+            if (!last_metrics_->reliable ||
+                last_metrics_->inlier_count < min_quality_inliers_ ||
+                last_metrics_->inlier_ratio < min_quality_inlier_ratio_ ||
+                last_metrics_->rmse > max_quality_rmse_) {
+                RCLCPP_WARN(rclcpp::get_logger("PoseEstimator"),
+                            "Scan matching quality too low (inliers=%zu, ratio=%.2f, rmse=%.3f m). Rejecting observation.",
+                            last_metrics_->inlier_count,
+                            last_metrics_->inlier_ratio,
+                            last_metrics_->rmse);
+                wo_pred_error_ = no_guess.inverse() * trans;
+                imu_pred_error_ = imu_guess.inverse() * trans;
+                consecutive_reject_count_++;
+                return aligned;
+            }
         }
         // ----------------------------------------------------------------------------------------------
 
@@ -245,20 +247,21 @@ public:
             if (q_pred.coeffs().dot(q_obs.coeffs()) < 0.0) q_obs.coeffs() *= -1.0;
             q_pred.normalize(); q_obs.normalize();
 
-            r6.head<3>() = (observation.head<3>() - s.head<3>()).cast<double>();
+            // 並進誤差(3) + 回転誤差(3)
+            r6.head<3>() = (observation.head<3>() - s.head<3>()).cast<double>(); // 並進誤差
             Eigen::Quaterniond q_err = q_obs * q_pred.conjugate();
             Eigen::AngleAxisd aa(q_err);
-            Eigen::Vector3d rv = aa.axis() * aa.angle();
+            Eigen::Vector3d rv = aa.axis() * aa.angle();                         // 回転誤差 (4->3)
             if (!rv.allFinite()) rv.setZero();
             r6.tail<3>() = rv;
 
-            Eigen::Matrix3d Jr_inv = rightJacobianInverseSO3(rv);
-            Eigen::Matrix<double,6,Eigen::Dynamic> H(6, filter_->getState().size());
+            Eigen::Matrix3d Jr_inv = rightJacobianInverseSO3(rv);                    // quatの共分散をSO(3)の接空間に変換するためのヤコビアン
+            Eigen::Matrix<double,6,Eigen::Dynamic> H(6, filter_->getState().size()); // 観測モデルのヤコビアン
             H.setZero();
             H.block<3,3>(0,0) = Eigen::Matrix3d::Identity();
             H.block<3,3>(3,7) = Jr_inv * 2.0 * Eigen::Matrix3d::Identity();
 
-            Eigen::Matrix<double,6,6> R6 = Eigen::Matrix<double,6,6>::Zero();
+            Eigen::Matrix<double,6,6> R6 = Eigen::Matrix<double,6,6>::Zero();   // 観測ノイズの共分散行列 (6x6)
             const auto& R7 = measurement_noise_;
             if (R7.rows() >= 7 && R7.cols() >= 7) {
                 R6.topLeftCorner<3,3>() = R7.topLeftCorner(3,3).cast<double>();
@@ -272,13 +275,11 @@ public:
             }
 
             Eigen::Matrix<double,6,6> S = H * filter_->getCovariance().cast<double>() * H.transpose() + R6;
-            for (int i = 0; i < 6; ++i) {
-                if (S(i, i) < 1e-12) S(i, i) += 1e-9;
-            }
+            for (int i = 0; i < 6; ++i) if (S(i, i) < 1e-12) S(i, i) += 1e-9; // 対角成分の数値不安定化防止
 
             Eigen::VectorXd r6v = r6;
             Eigen::VectorXd zero = Eigen::VectorXd::Zero(6);
-            last_mahalanobis_d2_ = squaredMahalanobis(r6v, zero, S);
+            last_mahalanobis_d2_ = squaredMahalanobis(r6v, zero, S); // 観測誤差のマハラノビス距離の2乗
 
             if (last_mahalanobis_d2_ > mahalanobis_threshold_) {
                 RCLCPP_WARN(rclcpp::get_logger("PoseEstimator"),
@@ -336,12 +337,18 @@ public:
     const std::optional<Matrix4t>& imu_prediction_error() const {
         return imu_pred_error_; // 予測と観測の残差
     }
+    const std::optional<scan_matching::ScanMatchingMetrics<PointT>>& last_metrics() const {
+        return last_metrics_;
+    }
 
     void setMahalanobisThreshold(double threshold) {
         mahalanobis_threshold_ = threshold;
     }
     void useMahalanobisGating(bool use) {
         use_mahalanobis_ = use;
+    }
+    void useDetailGating(bool use) {
+        use_detail_gating_ = use;
     }
 
 
@@ -429,7 +436,7 @@ private:
     std::unique_ptr<model::EKFOdomPoseSystemModel> odom_system_model_;
     std::unique_ptr<filter::KalmanFilterX> filter_;
 
-    bool use_mahalanobis_{false};
+    bool use_mahalanobis_{false}, use_detail_gating_{false};
     double last_mahalanobis_d2_{0.0};
     double mahalanobis_threshold_{16.81}; // 99% confidence interval for chi-squared distribution with 6 DOF
     // (calculated by scipy.stats.chi2.ppf(0.99, df=6))

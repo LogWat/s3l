@@ -6,6 +6,7 @@ Panels:
       Expanded:
         - /Global Options1
         - /Status1
+        - /PointCloud21
         - /TF1/Frames1
         - /Odometry1/Topic1
         - /Odometry1/Shape1
@@ -72,9 +73,9 @@ Visualization Manager:
       Name: PointCloud2
       Position Transformer: XYZ
       Selectable: true
-      Size (Pixels): 3
+      Size (Pixels): 2
       Size (m): 0.10000000149011612
-      Style: Flat Squares
+      Style: Points
       Topic:
         Depth: 5
         Durability Policy: Transient Local
@@ -90,6 +91,8 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: false
+        base_footprint:
+          Value: true
         base_link:
           Value: true
         front_realsense_accel_frame:
@@ -112,6 +115,8 @@ Visualization Manager:
           Value: true
         front_realsense_link:
           Value: false
+        imu_link:
+          Value: true
         livox1_frame:
           Value: false
         livox2_frame:
@@ -134,21 +139,6 @@ Visualization Manager:
       Tree:
         map:
           base_link:
-            front_realsense_link:
-              front_realsense_accel_frame:
-                front_realsense_accel_optical_frame:
-                  {}
-              front_realsense_aligned_depth_to_color_frame:
-                front_realsense_color_optical_frame:
-                  {}
-              front_realsense_color_frame:
-                {}
-              front_realsense_depth_frame:
-                front_realsense_depth_optical_frame:
-                  {}
-              front_realsense_gyro_frame:
-                front_realsense_gyro_optical_frame:
-                  {}
             livox1_frame:
               {}
             livox2_frame:
@@ -237,7 +227,7 @@ Visualization Manager:
       Selectable: true
       Size (Pixels): 3
       Size (m): 0.20000000298023224
-      Style: Flat Squares
+      Style: Points
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -294,25 +284,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 104.12032318115234
+      Distance: 33.28911590576172
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 0
-        Y: 0
-        Z: 0
+        X: 1.2481824159622192
+        Y: -1.4873404502868652
+        Z: 1.7849061489105225
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.9603985548019409
+      Pitch: 1.0697969198226929
       Target Frame: base_link
       Value: Orbit (rviz_default_plugins)
-      Yaw: 3.9035799503326416
+      Yaw: 4.648594856262207
     Saved: ~
 Window Geometry:
   Displays:
