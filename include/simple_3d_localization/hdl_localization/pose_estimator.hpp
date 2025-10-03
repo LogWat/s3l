@@ -108,8 +108,8 @@ public:
 
         // 位置(3) + 姿勢(4) = 7
         measurement_noise_ = MatrixXt::Identity(7, 7);
-        measurement_noise_.middleRows(0, 3) *= 0.25;
-        measurement_noise_.middleRows(3, 4) *= 0.25;
+        measurement_noise_.middleRows(0, 3) *= 0.01;
+        measurement_noise_.middleRows(3, 4) *= 0.01;
         measurement_noise_base_ = measurement_noise_;
 
 
@@ -169,6 +169,37 @@ public:
     }
 
     /**
+     * @brief predict (delta model)
+     * @param stamp    timestamp
+     * @param delta_pos   delta position
+     * @param delta_quat  delta quaternion
+     */
+    void predict(const rclcpp::Time& stamp, const Vector3t& delta_pos, const Quaterniont& delta_quat) {
+        if (init_stamp_ == rclcpp::Time()) {
+            init_stamp_ = stamp;
+        }
+        if ((stamp - init_stamp_).seconds() < cool_time_duration_ || prev_stamp_ == rclcpp::Time() || (stamp - prev_stamp_).seconds() < 0.01) {
+            prev_stamp_ = stamp;
+            return;
+        }
+
+        double dt = (stamp - prev_stamp_).seconds();
+        prev_stamp_ = stamp;
+
+        filter_->setDt(dt);
+        filter_->setProcessNoise(process_noise_ * dt);
+
+        VectorXt u(7); u.head<3>() = delta_pos;
+        u.tail<4>() = Vector4t(delta_quat.w(), delta_quat.x(), delta_quat.y(), delta_quat.z());
+        filter_->predict(u);
+
+        auto& state_after = const_cast<VectorXt&>(filter_->getState());
+        Eigen::Map<Quaterniont> q_pred(const_cast<SystemType*>(&state_after[6]));
+        if (std::isfinite(q_pred.w()) && q_pred.norm() > 1e-8f) q_pred.normalize();
+        else q_pred = Quaterniont::Identity();
+    }
+
+    /**
      * @brief correct
      * @param cloud   input cloud
      * @return cloud aligned to the globalmap
@@ -190,8 +221,6 @@ public:
         pcl::PointCloud<PointT>::Ptr aligned(new pcl::PointCloud<PointT>());
         registration_->setInputSource(cloud);
         registration_->align(*aligned, init_guess); // 事前に設定されているregistration方法でalign (NDT_OMP, GICP, etc.)
-
-        return aligned;
 
         Matrix4t trans = registration_->getFinalTransformation();
         bool converged = registration_->hasConverged();
@@ -450,8 +479,8 @@ private:
 
     // matching evaluator
     MatrixXt measurement_noise_base_;
-    double translation_noise_floor_{0.25};       // 並進誤差の下限 (m^2)
-    double rotation_noise_floor_{0.25};          // 回転誤差の下限 (rad^2)
+    double translation_noise_floor_{0.01};       // 並進誤差の下限 (m^2)
+    double rotation_noise_floor_{0.01};          // 回転誤差の下限 (rad^2)
     double poor_quality_noise_scale_{25.0};      // 低品質時のスケール
     std::size_t min_quality_inliers_{30};        // 最小品質インライア数
     double min_quality_inlier_ratio_{0.25};      // 最小品質インライア比

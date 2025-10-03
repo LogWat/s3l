@@ -29,7 +29,7 @@
 #include <small_gicp/util/downsampling_omp.hpp>
 
 #include <simple_3d_localization/hdl_localization/pose_estimator.hpp>
-
+#include <simple_3d_localization/odom_relative_motion.hpp>
 #include <simple_3d_localization/type.hpp>
 #include <simple_3d_localization/msg/scan_matching_status.hpp>
 #include <simple_3d_localization/srv/set_global_map.hpp>
@@ -460,17 +460,39 @@ private:
             }
             for (const auto& odom_msg : local_lio_odom) {
                 const auto odom_stamp = rclcpp::Time(odom_msg->header.stamp.sec, odom_msg->header.stamp.nanosec);
-                if (odom_stamp > stamp) {
-                    lio_odom_buffer_.push_back(odom_msg);
+                // if (odom_stamp > stamp) {
+                //     lio_odom_buffer_.push_back(odom_msg);
+                //     continue;
+                // }
+                if (!last_lio_odom_state_) {
+                    last_lio_odom_state_ = *odom_msg;
                     continue;
                 }
-                Eigen::Vector3f vel(odom_msg->twist.twist.linear.x, odom_msg->twist.twist.linear.y, odom_msg->twist.twist.linear.z);
-                Eigen::Vector3f omega(odom_msg->twist.twist.angular.x, odom_msg->twist.twist.angular.y, odom_msg->twist.twist.angular.z);
+                s3l::utils::RelativeMotion rel_motion;
+                if (!s3l::utils::computeRelativeMotion(last_lio_odom_state_.value(), *odom_msg, rel_motion)) {
+                    RCLCPP_WARN(this->get_logger(), "Failed to compute relative motion from LIO odometry.");
+                    last_lio_odom_state_ = *odom_msg;
+                    continue;
+                }
+                Eigen::Vector3f delta_x = rel_motion.translation.cast<float>();
+                Eigen::Quaternionf delta_q = rel_motion.rotation.cast<float>();
                 try {
-                    pose_estimator_->predict(odom_stamp, vel, omega);
+                    pose_estimator_->predict(odom_stamp, delta_x, delta_q);
                 } catch (const std::exception & e) {
                     RCLCPP_ERROR(this->get_logger(), "Pose prediction failed: %s", e.what());
                 }
+                // RCLCPP_INFO(this->get_logger(), "Odom delta position: [%f, %f, %f]", delta_x.x(), delta_x.y(), delta_x.z());
+                if (!debug_initialized_) {
+                    debug_time_ = odom_stamp;
+                    debug_initialized_ = true;
+                } else {
+                    debug_time_ = odom_stamp;
+                    debug_pos_ += delta_x;
+                    RCLCPP_INFO(this->get_logger(), "Debug predicted position: [%f, %f, %f] (delta_x: [%f, %f, %f])", 
+                        debug_pos_.x(), debug_pos_.y(), debug_pos_.z(),
+                        delta_x.x(), delta_x.y(), delta_x.z());
+                }
+                last_lio_odom_state_ = *odom_msg;
             }
         } else {
             std::vector<sensor_msgs::msg::Imu::ConstSharedPtr> local_imu;
@@ -685,6 +707,7 @@ private:
     // lio_odom buffer
     std::mutex lio_odom_mutex_;
     std::vector<nav_msgs::msg::Odometry::ConstSharedPtr> lio_odom_buffer_;
+    std::optional<nav_msgs::msg::Odometry> last_lio_odom_state_;
 
     // globalmap and registration method
     pcl::PointCloud<PointT>::Ptr globalmap_;
@@ -706,5 +729,11 @@ private:
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr relocalize_srv_;
     rclcpp::Client<simple_3d_localization::srv::SetGlobalMap>::SharedPtr set_globalmap_client_;
     rclcpp::Client<simple_3d_localization::srv::QueryGlobalLocalization>::SharedPtr query_global_localization_client_;
+
+    // DEBUG 
+    Eigen::Vector3f debug_pos_{0.0f, 0.0f, 0.0f};
+    Eigen::Quaternionf debug_quat_{1.0f, 0.0f, 0.0f, 0.0f};
+    rclcpp::Time debug_time_ = this->now();
+    bool debug_initialized_{false};
 };
 } // namespace s3l::hdl_localization

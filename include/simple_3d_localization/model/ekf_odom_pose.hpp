@@ -40,6 +40,7 @@ public:
     }
 
     // f(x, u)
+    // u = [delta_x, delta_y, delta_z, delta_qw, delta_qx, delta_qy, delta_qz]
     VectorXt f(const VectorXt& state, const VectorXt& control) const override {
         VectorXt next_state(state.size());
 
@@ -47,21 +48,14 @@ public:
         const Vector3t v = state.middleRows(3, 3);
         Quaterniont q(state(6), state(7), state(8), state(9));
         q.normalize();
-
-        Vector3t vel_body = control.head<3>();
-        Vector3t gyro     = control.tail<3>();
-
-        Vector3t p_next = p + v * dt_;
         
-        MatrixXt R = q.toRotationMatrix(); // body -> world
-        Vector3t vel_world = R * vel_body;
-        Vector3t v_next = vel_world;
+        const Vector3t delta_p_body = control.head<3>();
+        const Quaterniont delta_q(control(3), control(4), control(5), control(6));
 
-        Vector3t theta = gyro * dt_;
-        Sophus::SO3<SystemType> dR = Sophus::SO3<SystemType>::exp(theta);
-        Sophus::SO3<SystemType> Rcurr(q.toRotationMatrix());
-        Sophus::SO3<SystemType> Rnext = Rcurr * dR;
-        Quaterniont q_next(Rnext.unit_quaternion());
+        // 位置の更新
+        Vector3t p_next = p + q.toRotationMatrix() * delta_p_body;
+        Vector3t v_next = delta_p_body / dt_; // 制御入力から速度を計算
+        Quaterniont q_next = q * delta_q;
 
         q_next.normalize();
 
