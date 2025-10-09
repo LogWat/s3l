@@ -15,7 +15,11 @@
 namespace s3l::model {
 
 /**
- * state: [px, py, pz, vx, vy, vz, qw, qx, qy, qz] (10)
+ * state: [px, py, pz, 
+ *         vx, vy, vz, 
+ *         qw, qx, qy, qz, 
+ *         bias_vx, bias_vy, bias_vz, 
+ *         bias_gx, bias_gy, bias_gz] (16)
  * measurement: [px, py, pz, qw, qx, qy, qz] (7)
  * control: [vel_x, vel_y, vel_z, gyro_x, gyro_y, gyro_z]  (6)
  *  - vel_* はbody座標系速度（LIO推定など）
@@ -32,10 +36,14 @@ public:
         const Vector3t v = state.middleRows(3, 3);
         Quaterniont q(state(6), state(7), state(8), state(9));
         q.normalize();
+        const Vector3t bias_v = state.middleRows(10, 3);
+        const Vector3t bias_g = state.middleRows(13, 3);
 
         next_state.middleRows(0, 3) = p + v * dt_;
         next_state.middleRows(3, 3) = v;
         next_state.middleRows(6, 4) = Vector4t(q.w(), q.x(), q.y(), q.z());
+        next_state.middleRows(10, 3) = bias_v;
+        next_state.middleRows(13, 3) = bias_g;
         return next_state;
     }
 
@@ -48,20 +56,27 @@ public:
         const Vector3t v = state.middleRows(3, 3);
         Quaterniont q(state(6), state(7), state(8), state(9));
         q.normalize();
+        const MatrixXt R = q.toRotationMatrix();
+        const Vector3t bias_v = state.middleRows(10, 3);
+        const Vector3t bias_g = state.middleRows(13, 3);
         
-        const Vector3t delta_p_body = control.head<3>();
-        const Quaterniont delta_q(control(3), control(4), control(5), control(6));
+        const Vector3t vel_body = control.head<3>();
+        const Vector3t gyro     = control.tail<3>();
 
-        // 位置の更新
-        Vector3t p_next = p + q.toRotationMatrix() * delta_p_body;
-        Vector3t v_next = delta_p_body / dt_; // 制御入力から速度を計算
-        Quaterniont q_next = q * delta_q;
+        const Vector3t vel_corrected = vel_body - bias_v;
+        const Vector3t gyro_corrected = gyro - bias_g;
 
-        q_next.normalize();
+        const Vector3t p_next = p + v * dt_;
+        const Vector3t v_next = R * vel_corrected;
+        const Quaterniont next_q(q * Sophus::SO3<SystemType>::exp(gyro_corrected * dt_).unit_quaternion());
+        const Vector3t bias_v_next = bias_v;
+        const Vector3t bias_g_next = bias_g;
 
         next_state.middleRows(0, 3) = p_next;
         next_state.middleRows(3, 3) = v_next;
-        next_state.middleRows(6, 4) = Vector4t(q_next.w(), q_next.x(), q_next.y(), q_next.z());
+        next_state.middleRows(6, 4) = Vector4t(next_q.w(), next_q.x(), next_q.y(), next_q.z());
+        next_state.middleRows(10, 3) = bias_v_next;
+        next_state.middleRows(13, 3) = bias_g_next;
         return next_state;
     }
 
