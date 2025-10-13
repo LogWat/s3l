@@ -142,7 +142,6 @@ public:
     }
 
     // KalmanFilterX overrides
-    // 追加のインターフェイス実装
     void setDt(double dt) override { system_model_.setDt(dt); }
     void setMean(const VectorXt& mean) override { mean_ = mean; }
     void setProcessNoise(const MatrixXt& q) override { process_noise_ = q; }
