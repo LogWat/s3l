@@ -48,30 +48,25 @@ public:
         Vector3t vt = state.middleRows(3, 3);
         Quaterniont qt(state[6], state[7], state[8], state[9]);
         qt.normalize();
-
+        const MatrixXt R = qt.toRotationMatrix();
         Vector3t acc_bias = state.middleRows(10, 3);
         Vector3t gyro_bias = state.middleRows(13, 3);
+        Vector3t gravity = state.middleRows(16, 3);
 
-        Vector3t raw_acc = control.middleRows(0, 3);
-        Vector3t raw_gyro = control.middleRows(3, 3);
-
-        // position
-        next_state.middleRows(0, 3) = pt + vt * dt_;
-
-        // velocity
-        Vector3t g = state.middleRows(16, 3);
-        Vector3t acc_ = raw_acc - acc_bias;
-        Vector3t acc = qt * acc_;
-        // next_state.middleRows(3, 3) = vt + (acc + g) * dt_;
-        next_state.middleRows(3, 3) = vt; // + (acc - g) * dt_;		// acceleration didn't contribute to accuracy due to large noise
-
-        // orientation
+        Vector3t raw_acc(control.head(3));
+        Vector3t raw_gyro(control.tail(3));
+        Vector3t acc_global = R * (raw_acc - acc_bias) + gravity; // Transform acceleration to global frame
         Vector3t gyro = raw_gyro - gyro_bias;
+
+
+        next_state.middleRows(0, 3) = pt + vt * dt_ + 0.5 * acc_global * dt_ * dt_;
+        // next_state.middleRows(0, 3) = pt + vt * dt_; // acceleration didn't contribute to accuracy due to large noise
+        next_state.middleRows(3, 3) = vt + acc_global * dt_;
+        // next_state.middleRows(3, 3) = vt;
         Quaterniont dq(1, gyro[0] * dt_ / 2, gyro[1] * dt_ / 2, gyro[2] * dt_ / 2);
         dq.normalize();
         Quaterniont qt_ = (qt * dq).normalized();
         next_state.middleRows(6, 4) << qt_.w(), qt_.x(), qt_.y(), qt_.z();
-
         next_state.middleRows(10, 3) = state.middleRows(10, 3);  // constant bias on acceleration
         next_state.middleRows(13, 3) = state.middleRows(13, 3);  // constant bias on angular velocity
         next_state.middleRows(16, 3) = state.middleRows(16, 3);  // constant gravity vector
@@ -87,8 +82,6 @@ public:
 
         return observation;
     }
-
-    // double dt_; // time step
 };
 
 } // namespace s3l::model

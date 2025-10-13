@@ -78,10 +78,10 @@ public:
         Vector3t gyro = raw_gyro - bias_gyro;
 
         // Update position and velocity based on control input
-        // next_state.head(3) = pt + vt * dt_ + 0.5 * acc_global * dt_ * dt_;
-        next_state.head(3) = pt + vt * dt_;
-        // next_state.segment(3, 3) = vt + acc_global * dt_;
-        next_state.segment(3, 3) = vt;
+        next_state.head(3) = pt + vt * dt_ + 0.5 * acc_global * dt_ * dt_;
+        // next_state.head(3) = pt + vt * dt_;
+        next_state.segment(3, 3) = vt + acc_global * dt_;
+        // next_state.segment(3, 3) = vt;
         Quaterniont next_q(qt * Sophus::SO3<SystemType>::exp(gyro * dt_).matrix());
         next_q.normalize();
 

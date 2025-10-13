@@ -22,8 +22,8 @@ namespace s3l::model {
  *         bias_gx, bias_gy, bias_gz] (16)
  * measurement: [px, py, pz, qw, qx, qy, qz] (7)
  * control: [vel_x, vel_y, vel_z, gyro_x, gyro_y, gyro_z]  (6)
- *  - vel_* はbody座標系速度（LIO推定など）
- *  - gyro_* はbody角速度
+ *  - vel_* はbody座標系速度
+ *  - gyro_* はbody座標系角速度
  */
 class EKFOdomPoseSystemModel : public EKFSystemModel {
 public:
