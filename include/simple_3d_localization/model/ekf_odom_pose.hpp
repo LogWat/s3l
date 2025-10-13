@@ -109,10 +109,15 @@ public:
     
         // Velocity Jacobian
         F.block<3, 4>(3, 6) = dR_dq(q, vel_body);
+        F.block<3, 3>(3, 10) = -R;
 
         // Orientation Jacobian
         F.block<4, 4>(6, 6) = dq_dqp(gyro, dt_);
+        F.block<4, 3>(6, 13) = dq_dbg(q, dt_);
 
+        // Bias Jacobian
+        F.block<3, 3>(10, 10) = MatrixXt::Identity(3, 3);
+        F.block<3, 3>(13, 13) = MatrixXt::Identity(3, 3);
         return F;
     }
 
@@ -185,6 +190,24 @@ public:
                       dqz,  dqy, -dqx,  dqw;
         }
         return result;
+    }
+
+    /**
+     * @brief Partial derivative of q with respect to bias_gyro
+     * @param qt Quaternion coefficients
+     * @param dt Time step
+     * @return Jacobian matrix of the quaternion with respect to bias gyro
+     */
+    Eigen::Matrix<SystemType, 4, 3> dq_dbg(const Quaterniont& qt, const double dt) const {
+        Eigen::Matrix<SystemType, 4, 3> result;
+        SystemType qw = qt.w(), qx = qt.x(), qy = qt.y(), qz = qt.z();
+        SystemType half_dt = 0.5 * dt;        
+        result << -qx, -qy, -qz,
+                  qw, -qz,  qy,
+                  qz,  qw, -qx,
+                 -qy,  qx,  qw;
+
+        return -half_dt * result;
     }
 };
 
