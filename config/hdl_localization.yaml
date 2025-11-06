@@ -1,0 +1,28 @@
+/**:
+  ros__parameters:
+    robot_odom_frame_id: "odom"
+    odom_child_frame_id: "base_link"
+    scanmatch_frame_id: "ndt_base_link"
+    registration_method: "ndt_omp"
+    ndt_neighbor_search_method: "DIRECT7"
+    use_imu_initializer: true
+    invert_acc: false
+    invert_gyro: false
+    downsample_leaf_size: 0.2
+    gicp_correspondence_randomness: 20
+    gicp_max_correspondence_distance: 1.0
+    gicp_voxel_resolution: 1.0
+    num_threads: 8
+    cool_time_duration: 0.5
+    use_mahalanobis_gating: false
+    mahalanobis_threshold: 58.29
+    use_imu: true
+    use_imu_acc: true
+    odometry_based_prediction: false
+    ndt_neighbor_search_radius: 2.0
+    ndt_resolution: 1.0
+    use_global_localization: false
+    filter_type: "ekf"
+    specify_init_pose: false
+    init_pose: [0.0, 0.0, 0.0]
+    init_quat: [0.0, 0.0, 0.0, 1.0] 
