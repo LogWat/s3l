@@ -12,9 +12,6 @@
 #include <tf2_ros/transform_broadcaster.h>
 
 #include <pcl/filters/voxel_grid.h>
-#include <small_gicp/pcl/pcl_point.hpp>
-#include <small_gicp/pcl/pcl_point_traits.hpp>
-#include <small_gicp/util/downsampling_omp.hpp>
 
 namespace s3l::map
 {
@@ -46,14 +43,10 @@ public:
         // downsample globalmap
         double downsample_resolution = this->declare_parameter<double>("downsample_resolution", 0.1);
         PointCloudT::Ptr filtered (new PointCloudT);
-        if (this->declare_parameter<bool>("use_downsample_omp", true)) {
-            filtered = small_gicp::voxelgrid_sampling_omp(*globalmap_, downsample_resolution);
-        } else {
-            std::shared_ptr<pcl::VoxelGrid<PointT>> voxel_grid_filter(new pcl::VoxelGrid<PointT>());
-            voxel_grid_filter->setInputCloud(globalmap_);
-            voxel_grid_filter->setLeafSize(downsample_resolution, downsample_resolution, downsample_resolution);
-            voxel_grid_filter->filter(*filtered);
-        }
+        std::shared_ptr<pcl::VoxelGrid<PointT>> voxel_grid_filter(new pcl::VoxelGrid<PointT>());
+        voxel_grid_filter->setInputCloud(globalmap_);
+        voxel_grid_filter->setLeafSize(downsample_resolution, downsample_resolution, downsample_resolution);
+        voxel_grid_filter->filter(*filtered);
         globalmap_ = filtered;
         RCLCPP_INFO(this->get_logger(), "Global map loaded with %zu points", globalmap_->size());
 
@@ -92,14 +85,10 @@ private:
         // downsample globalmap
         double downsample_resolution = this->declare_parameter<double>("downsample_resolution", 0.1);
         PointCloudT::Ptr filtered (new PointCloudT);
-        if (this->declare_parameter<bool>("use_downsample_omp", true)) {
-            filtered = small_gicp::voxelgrid_sampling_omp(*globalmap_, downsample_resolution);
-        } else {
-            std::shared_ptr<pcl::VoxelGrid<PointT>> voxel_grid_filter(new pcl::VoxelGrid<PointT>());
-            voxel_grid_filter->setInputCloud(globalmap_);
-            voxel_grid_filter->setLeafSize(downsample_resolution, downsample_resolution, downsample_resolution);
-            voxel_grid_filter->filter(*filtered);
-        }
+        std::shared_ptr<pcl::VoxelGrid<PointT>> voxel_grid_filter(new pcl::VoxelGrid<PointT>());
+        voxel_grid_filter->setInputCloud(globalmap_);
+        voxel_grid_filter->setLeafSize(downsample_resolution, downsample_resolution, downsample_resolution);
+        voxel_grid_filter->filter(*filtered);
         globalmap_ = filtered;
         publishGlobalMap();
     }

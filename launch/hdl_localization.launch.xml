@@ -15,36 +15,8 @@
   <arg name="globalmap_pcd" default="$(var project_share)/maps/GlobalMap.pcd"/>
   <arg name="convert_utm_to_local" default="false"/>
   <arg name="downsample_resolution" default="0.2"/>
-  <arg name="use_downsample_omp" default="true"/>
   <!-- hdl_localization -->
-  <arg name="robot_odom_frame_id" default="odom"/>
-  <arg name="odom_child_frame_id" default="base_link"/>
-  <arg name="scanmatch_frame_id" default="ndt_base_link"/>
-  <arg name="filter_type" default="ukf"/> <!-- "ukf", "ekf" -->
-  <arg name="registration_method" default="ndt_omp"/> <!-- "ndt_cuda", "ndt_omp", "gicp", "vgicp" -->
-  <arg name="ndt_neighbor_search_method" default="DIRECT7"/> <!-- "DIRECT1", "DIRECT7", "KDTREE" -->
-  <arg name="use_imu" default="true"/>
-  <arg name="use_imu_initializer" default="false"/>
-  <arg name="invert_acc" default="false"/>
-  <arg name="invert_gyro" default="false"/>
-  <arg name="use_mahalanobis_gating" default="true"/>
-  <arg name="mahalanobis_threshold" default="33.11"/> <!-- 1.0-(1e-5)% confidence interval for chi-squared distribution with 6 DOF -->
-  <arg name="odometry_based_prediction" default="false"/>
-  <arg name="downsample_leaf_size" default="0.2"/>
-  <arg name="gicp_correspondence_randomness" default="20"/>
-  <arg name="gicp_max_correspondence_distance" default="2.5"/>
-  <arg name="gicp_voxel_resolution" default="1.0"/>
-  <arg name="num_threads" default="8"/>
-  <arg name="ndt_neighbor_search_radius" default="2.0"/>
-  <arg name="ndt_resolution" default="1.0"/>
-  <arg name="use_global_localization" default="false"/>
-  <arg name="specify_init_pose" default="false"/>
-  <arg name="init_pose" default="[0.0, 0.0, 0.0]"/>
-  <arg name="init_quat" default="[0.0, 0.0, 0.0, 1.0]"/>
-  <arg name="cool_time_duration" default="0.5"/>
   <arg name="use_intra_process_comms" default="false"/>
-
-  <!-- remap args -->
   <arg name="imu_topic" default="/livox/imu"/>
   <arg name="twist_topic" default="/odom/twist"/>
   <arg name="pointcloud_topic" default="velodyne_points"/>
@@ -77,7 +49,6 @@
         <param name="globalmap_pcd" value="$(var globalmap_pcd)"/>
         <param name="convert_utm_to_local" value="$(var convert_utm_to_local)"/>
         <param name="downsample_resolution" value="$(var downsample_resolution)"/>
-        <param name="use_downsample_omp" value="$(var use_downsample_omp)"/>
         <extra_arg name="use_intra_process_comms" value="$(var use_intra_process_comms)"/>
         <remap from="globalmap" to="$(var global_map_topic)"/>
       </composable_node>
@@ -85,31 +56,7 @@
           pkg="$(var project_name)"
           plugin="$(var project_namespace)::hdl_localization::LocalizationNode"
           name="hdl_localization_node">
-        <param name="robot_odom_frame_id" value="$(var robot_odom_frame_id)"/>
-        <param name="odom_child_frame_id" value="$(var odom_child_frame_id)"/>
-        <param name="scanmatch_frame_id" value="ndt_base_link"/>
-        <param name="filter_type" value="$(var filter_type)"/>
-        <param name="registration_method" value="$(var registration_method)"/>
-        <param name="ndt_neighbor_search_method" value="$(var ndt_neighbor_search_method)"/>
-        <param name="use_imu" value="$(var use_imu)"/>
-        <param name="use_imu_initializer" value="$(var use_imu_initializer)"/>
-        <param name="invert_acc" value="$(var invert_acc)"/>
-        <param name="invert_gyro" value="$(var invert_gyro)"/>
-        <param name="use_mahalanobis_gating" value="$(var use_mahalanobis_gating)"/>
-        <param name="mahalanobis_threshold" value="$(var mahalanobis_threshold)"/>
-        <param name="odometry_based_prediction" value="$(var odometry_based_prediction)"/>
-        <param name="downsample_leaf_size" value="$(var downsample_leaf_size)"/>
-        <param name="gicp_correspondence_randomness" value="$(var gicp_correspondence_randomness)"/>
-        <param name="gicp_max_correspondence_distance" value="$(var gicp_max_correspondence_distance)"/>
-        <param name="gicp_voxel_resolution" value="$(var gicp_voxel_resolution)"/>
-        <param name="num_threads" value="$(var num_threads)"/>
-        <param name="ndt_neighbor_search_radius" value="$(var ndt_neighbor_search_radius)"/>
-        <param name="ndt_resolution" value="$(var ndt_resolution)"/>
-        <param name="use_global_localization" value="$(var use_global_localization)"/>
-        <param name="specify_init_pose" value="$(var specify_init_pose)"/>
-        <param name="init_pose" value="$(var init_pose)"/>
-        <param name="init_quat" value="$(var init_quat)"/>
-        <param name="cool_time_duration" value="$(var cool_time_duration)"/>
+        <param from="$(var project_share)/config/hdl_localization.yaml" allow_substs="true"/>
         <remap from="imu/data" to="$(var imu_topic)"/>
         <remap from="odometry/twist" to="$(var twist_topic)"/>
         <remap from="points_raw" to="$(var pointcloud_topic)"/>
