@@ -12,7 +12,8 @@ using Quaterniont = Eigen::Quaternion<SystemType>;
 
 enum FilterType {
     UKF,
-    EKF
+    EKF,
+    ESKF
 };
 
 struct ImuData {
