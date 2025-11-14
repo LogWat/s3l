@@ -105,7 +105,7 @@ public:
             RCLCPP_INFO(this->get_logger(), "IMU initialization is skipped. Using provided parameters.");
         }
 
-        // filter type (ukf, ekf)
+        // filter type (ukf, ekf, eskf)
         std::string filter_type_str = this->declare_parameter<std::string>("filter_type", "ukf");
         if (filter_type_str == "ukf") {
             RCLCPP_INFO(this->get_logger(), "Using Unscented Kalman Filter (UKF) for pose estimation.");
@@ -113,6 +113,9 @@ public:
         } else if (filter_type_str == "ekf") {
             RCLCPP_INFO(this->get_logger(), "Using Extended Kalman Filter (EKF) for pose estimation.");
             filter_type_ = FilterType::EKF;
+        } else if (filter_type_str == "eskf") {
+            RCLCPP_INFO(this->get_logger(), "Using Error State Kalman Filter (ESKF) for pose estimation.");
+            filter_type_ = FilterType::ESKF;
         } else {
             RCLCPP_WARN(this->get_logger(), "Invalid filter type: %s. Using UKF by default.", filter_type_str.c_str());
             filter_type_ = FilterType::UKF;
@@ -653,7 +656,7 @@ private:
 
     double mahalanobis_threshold_;
 
-    FilterType filter_type_; // ekf, ukf
+    FilterType filter_type_; // ekf, ukf, eskf
 
     // init pose params
     double cool_time_duration_;

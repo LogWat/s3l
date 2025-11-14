@@ -59,8 +59,8 @@ public:
 
     // KalmanFilterX<T> overrides
     void setDt(double dt) override {
-        double dt_c = std::max(std::min(dt, 1.0), 1e-6);
-        model_.setDt(dt_c);
+        last_dt_ = std::max(std::min(dt, 1.0), 1e-6);
+        model_.setDt(last_dt_);
     }
     void setMean(const VectorXt& mean) override { 
         nominal_state_ = mean;
@@ -73,7 +73,7 @@ public:
     void setMeasurementNoise(const MatrixXt& measurement_noise) override {
         V_ = measurement_noise;
     }
-    void predict(const VectorXt& control) override { predict(0.01, control); }
+    void predict(const VectorXt& control) override { predict(last_dt_, control); }
     void correct(const VectorXt& measurement) override { 
         correct(measurement, V_);
     }
@@ -106,6 +106,7 @@ private:
 
 
     int state_dim_;
+    double last_dt_;
     model::ESKFSystemModel& model_;
     VectorXt state_;
     VectorXt nominal_state_;

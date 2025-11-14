@@ -12,10 +12,12 @@
 #include <simple_3d_localization/filter/filter.hpp>
 #include <simple_3d_localization/filter/ukf.hpp>
 #include <simple_3d_localization/filter/ekf.hpp>
+#include <simple_3d_localization/filter/eskf.hpp>
 
 #include <simple_3d_localization/model/ukf_pose.hpp>
 #include <simple_3d_localization/model/ekf_odom_pose.hpp>
 #include <simple_3d_localization/model/ekf_pose.hpp>
+#include <simple_3d_localization/model/eskf_pose.hpp>
 
 #include <simple_3d_localization/mahalanobis.hpp>
 
@@ -69,6 +71,11 @@ public:
         int state_dim = use_odom_ ? 16 : 19;
         int input_dim = 6; // IMU: acc(3) + gyro(3), odom: vel(3) + gyro(3)
         int measurement_dim = 7;
+
+        double acc_noise = 5e-4;  // m/s^2/√Hz
+        double gyro_noise = 5e-5; // rad/s/√Hz
+        double acc_bias_noise = 1e-6;  // m/s^2/√Hz
+        double gyro_bias_noise = 1e-7; // rad/s/√Hz
 
         if (!use_odom_) {
             // 位置(3) + 速度(3) + 姿勢(4) + bias(3) + bias_gyro(3) + gravity(3) = 19
@@ -131,6 +138,11 @@ public:
             else ekf_system_model_ = std::make_unique<model::EKFPoseSystemModel>();
             filter_ = std::make_unique<filter::ExtendedKalmanFilterX>(
                 *ekf_system_model_, state_dim, mean, cov, process_noise_
+            );
+        } else if (filter_type_ == FilterType::ESKF) {
+            eskf_system_model_ = std::make_unique<model::ESKFPoseSystemModel>();
+            filter_ = std::make_unique<filter::ErrorStateKalmanFilterX>(
+                *eskf_system_model_, state_dim - 1, mean, cov, acc_noise, gyro_noise, acc_bias_noise, gyro_bias_noise
             );
         }
         filter_->setMean(mean);
@@ -393,6 +405,7 @@ private:
     FilterType filter_type_;
     std::unique_ptr<model::UKFPoseSystemModel> ukf_system_model_;
     std::unique_ptr<model::EKFSystemModel> ekf_system_model_;
+    std::unique_ptr<model::ESKFSystemModel> eskf_system_model_;
     std::unique_ptr<filter::KalmanFilterX> filter_;
 
     bool use_mahalanobis_;
