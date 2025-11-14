@@ -57,6 +57,30 @@ public:
         resetFilter();
     }
 
+    // KalmanFilterX<T> overrides
+    void setDt(double dt) override {
+        double dt_c = std::max(std::min(dt, 1.0), 1e-6);
+        model_.setDt(dt_c);
+    }
+    void setMean(const VectorXt& mean) override { 
+        nominal_state_ = mean;
+        error_state_.setZero();
+        updateState();
+    }
+    void setProcessNoise(const MatrixXt& process_noise) override {
+        // Not used directly; process noise is set via IMU noise parameters
+    }
+    void setMeasurementNoise(const MatrixXt& measurement_noise) override {
+        V_ = measurement_noise;
+    }
+    void predict(const VectorXt& control) override { predict(0.01, control); }
+    void correct(const VectorXt& measurement) override { 
+        correct(measurement, V_);
+    }
+
+    [[nodiscard]] const VectorXt& getState() const override { return state_; }
+    [[nodiscard]] const MatrixXt& getCovariance() const override { return P_; }
+
 private:
     void resetFilter() {
         const MatrixXt G = model_.getJacobianG(error_state_);
@@ -87,6 +111,7 @@ private:
     VectorXt nominal_state_;
     VectorXt error_state_;
     MatrixXt P_;
+    MatrixXt V_; // measurement noise covariance
 };
 
 } // namespace s3l::filter
